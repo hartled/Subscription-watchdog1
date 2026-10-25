@@ -10,7 +10,7 @@
   <div class="stat"><span>Per month</span><strong>{{ money(totals.monthly) }}</strong></div>
   <div class="stat"><span>Per year</span><strong>{{ money(totals.yearly) }}</strong></div>
   <div class="stat"><span>Active subscriptions</span><strong>{{ totals.count }}</strong></div>
-  <div class="stat {% if totals.hikes %}warn{% endif %}"><span>Price hikes</span><strong>{{ totals.hikes }}</strong>{% if totals.hikes %}<small>+{{ money(totals.hike_extra_yearly) }}/yr</small>{% endif %}</div>
+  <div class="stat {% if totals.hikes %}warn{% endif %}"><span>Price hikes <a class="small" href="/alerts">details</a></span><strong>{{ totals.hikes }}</strong>{% if totals.hikes %}<small>+{{ money(totals.hike_extra_yearly) }}/yr</small>{% endif %}</div>
   <div class="stat {% if totals.flagged %}warn{% endif %}"><span>Worth reviewing</span><strong>{{ totals.flagged }}</strong></div>
 </div>
 
@@ -18,7 +18,8 @@
 <div class="card">
   <h2>Renewing in the next 14 days</h2>
   <ul class="plain">{% for s in upcoming %}<li><strong>{{ s.next_date.strftime('%a %b %d') }}</strong> — <a href="/subscription/{{ s.slug }}">{{ s.label }}</a> {{ money(s.current_amount) }}</li>{% endfor %}</ul>
-  <a class="btn ghost small" href="/calendar.ics">Download calendar (.ics)</a>
+  {% if unlocked %}<a class="btn ghost small" href="/calendar.ics">Download calendar (.ics)</a>
+  {% else %}<a class="btn ghost small" href="/pricing?feature=calendar">Add to my calendar (.ics) · Unlock</a> <a class="small" href="/reminders">or set free in-app reminders</a>{% endif %}
 </div>
 {% endif %}
 

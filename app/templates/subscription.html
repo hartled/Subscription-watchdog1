@@ -23,6 +23,7 @@
   <div class="card">
     <h2>Remind me</h2>
     <form method="post" action="/reminders" class="stack">
+      {{ csrf_field() }}
       <input type="hidden" name="merchant" value="{{ s.label }}">
       <input type="hidden" name="next_url" value="/subscription/{{ s.slug }}">
       <label>Date <input type="date" name="remind_on" value="{{ default_remind.isoformat() }}" required></label>
@@ -30,7 +31,7 @@
       <button class="btn" type="submit">Add reminder</button>
     </form>
     {% if reminders %}<ul class="plain">{% for r in reminders %}<li>📅 {{ r.remind_on.strftime('%b %d, %Y') }} — {{ r.note }}</li>{% endfor %}</ul>{% endif %}
-    <p class="small"><a href="/calendar.ics">Download all renewals & reminders (.ics)</a></p>
+    <p class="small">{% if unlocked %}<a href="/calendar.ics">Download all renewals & reminders (.ics)</a>{% else %}<a href="/pricing?feature=calendar">Calendar (.ics) export is part of the Unlock</a> — in-app reminders are free.{% endif %}</p>
     <h2>Charge history</h2>
     <table class="compact"><tbody>{% for t in s.charges|reverse %}<tr><td>{{ t.date.strftime('%b %d, %Y') }}</td><td class="num">{{ money(t.amount) }}</td><td class="muted small">{{ t.description }}</td></tr>{% endfor %}</tbody></table>
   </div>

@@ -255,3 +255,24 @@ def totals(subs: list[Subscription]) -> dict:
 def upcoming(subs: list[Subscription], today: date, days: int = 14) -> list[Subscription]:
     return sorted([s for s in subs if s.active and today <= s.next_date <= today + timedelta(days=days)],
                   key=lambda s: s.next_date)
+
+
+def price_changes(s: Subscription) -> list[dict]:
+    """Every price step in a subscription's history (increases and decreases), oldest first.
+    Each: {date, old, new, pct, yearly_delta, paid_extra} — paid_extra = what you've paid above the old price since."""
+    charges = s.charges
+    segs = _segments([t.amount for t in charges])
+    out, idx = [], 0
+    for prev, seg in zip(segs, segs[1:]):
+        idx += len(prev)
+        old, new = round(median(prev), 2), round(median(seg), 2)
+        if abs(new - old) < 0.25:
+            continue
+        after = charges[idx:idx + len(seg)]
+        out.append({
+            "date": charges[idx].date, "old": old, "new": new,
+            "pct": round((new - old) / old * 100, 1) if old else None,
+            "yearly_delta": round((new - old) / MONTHS_PER[s.cadence] * 12, 2),
+            "paid_extra": round(sum(t.amount - old for t in after), 2),
+        })
+    return out

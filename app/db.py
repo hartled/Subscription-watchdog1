@@ -5,7 +5,7 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, String, create_engine, delete, event, select
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, String, create_engine, delete, event, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
@@ -16,6 +16,8 @@ def database_path() -> Path:
 
 
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7"))
+# Opt-in saved history (premium) is kept until this many days of inactivity, or until the user deletes it.
+SAVED_RETENTION_DAYS = int(os.getenv("SAVED_RETENTION_DAYS", "365"))
 
 
 class Base(DeclarativeBase):
@@ -27,6 +29,7 @@ class UserSession(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    saved: Mapped[bool] = mapped_column(Boolean, default=False)  # premium opt-in: exempt from short retention
 
 
 class Transaction(Base):
@@ -47,6 +50,28 @@ class Reminder(Base):
     note: Mapped[str] = mapped_column(String(300), default="")
 
 
+class Entitlement(Base):
+    """A paid (or dev-simulated) unlock. Holds NO card, name or email data — only what proves the purchase."""
+    __tablename__ = "entitlements"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    stripe_session_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)       # sha256 of the unlock token
+    nonce_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)  # ties checkout to buyer's browser
+    payment_intent: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)  # for refund revocation
+    status: Mapped[str] = mapped_column(String(20), default="paid")       # paid | refunded
+    source: Mapped[str] = mapped_column(String(10), default="stripe")     # stripe | dev
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    saved_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class WebhookEvent(Base):
+    """Processed Stripe event ids — makes the webhook idempotent (Stripe retries and may deliver twice)."""
+    __tablename__ = "webhook_events"
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    type: Mapped[str] = mapped_column(String(100))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 _engine = None
 SessionLocal: sessionmaker | None = None
 
@@ -63,8 +88,17 @@ def init_db(path: Path | None = None):
         dbapi_conn.execute("PRAGMA secure_delete=ON")  # overwrite deleted content on disk
 
     Base.metadata.create_all(_engine)
+    _migrate(_engine)
     SessionLocal = sessionmaker(_engine, expire_on_commit=False)
     return _engine
+
+
+def _migrate(engine):
+    """Tiny forward-only migration for DBs created by the pre-unlock MVP."""
+    with engine.begin() as conn:
+        cols = {r[1] for r in conn.execute(text("PRAGMA table_info(sessions)"))}
+        if "saved" not in cols:
+            conn.execute(text("ALTER TABLE sessions ADD COLUMN saved BOOLEAN DEFAULT 0"))
 
 
 def get_db():
@@ -76,8 +110,13 @@ def get_db():
 
 
 def purge_expired(db: Session) -> int:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
-    ids = [s.id for s in db.scalars(select(UserSession).where(UserSession.last_seen < cutoff))]
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=RETENTION_DAYS)
+    saved_cutoff = now - timedelta(days=SAVED_RETENTION_DAYS)
+    ids = [s.id for s in db.scalars(select(UserSession).where(
+        UserSession.last_seen < cutoff, UserSession.saved.is_not(True)))]
+    ids += [s.id for s in db.scalars(select(UserSession).where(
+        UserSession.last_seen < saved_cutoff, UserSession.saved.is_(True)))]
     for sid in ids:
         delete_session_data(db, sid)
     return len(ids)
@@ -87,4 +126,6 @@ def delete_session_data(db: Session, sid: str):
     db.execute(delete(Transaction).where(Transaction.session_id == sid))
     db.execute(delete(Reminder).where(Reminder.session_id == sid))
     db.execute(delete(UserSession).where(UserSession.id == sid))
+    for e in db.scalars(select(Entitlement).where(Entitlement.saved_session_id == sid)):
+        e.saved_session_id = None  # the purchase record stays; the saved history is gone
     db.commit()

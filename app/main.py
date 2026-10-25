@@ -1,6 +1,7 @@
 """Subscription Watchdog — FastAPI app."""
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from contextlib import asynccontextmanager
@@ -11,12 +12,18 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
+from jinja2 import pass_context
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import httpx
+
 from . import db as dbm
-from .db import Reminder, Transaction, UserSession, get_db
-from .detect import MONTHS_PER, detect_subscriptions, totals, upcoming
+from . import payments as pay
+from .db import Entitlement, Reminder, Transaction, UserSession, WebhookEvent, get_db
+from .detect import MONTHS_PER, detect_subscriptions, price_changes, totals, upcoming
 from .guides import GENERIC, GUIDES, guide_for
 from .ics import build_ics
 from .normalize import mask_digits
@@ -25,8 +32,18 @@ from .parsing import ParseError, Txn, parse_csv, parse_pasted
 BASE = Path(__file__).resolve().parent
 ROOT = BASE.parent
 COOKIE = "sw_session"
+UNLOCK_COOKIE = "sw_unlock"        # holds the signed unlock code (proof of purchase); no personal data
+PENDING_COOKIE = "sw_checkout"     # random nonce tying a Stripe checkout to the buyer's browser
+CSRF_COOKIE = "sw_csrf"
 MAX_UPLOAD = 2 * 1024 * 1024
+MAX_WEBHOOK = 256 * 1024
 SECURE_COOKIE = os.getenv("SECURE_COOKIES", "0") == "1"
+log = logging.getLogger("watchdog")
+
+
+def persistent_storage() -> bool:
+    """False on hosts whose disk is wiped on restart (Render free). Saved history is only sold when True."""
+    return os.getenv("PERSISTENT_STORAGE", "1") == "1"
 
 @asynccontextmanager
 async def lifespan(_app):
@@ -41,25 +58,134 @@ app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 templates = Jinja2Templates(directory=BASE / "templates")
 templates.env.globals["money"] = lambda v: f"${v:,.2f}"
 templates.env.globals["retention_days"] = dbm.RETENTION_DAYS
+templates.env.globals["saved_retention_days"] = dbm.SAVED_RETENTION_DAYS
+
+
+@pass_context
+def _csrf_field(ctx):
+    tok = getattr(ctx["request"].state, "csrf_token", "")
+    return Markup(f'<input type="hidden" name="csrf_token" value="{tok}">')
+
+
+templates.env.globals["csrf_field"] = _csrf_field
 
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    # CSRF: double-submit token. A random value lives in a SameSite=Lax cookie and must be echoed back in every
+    # POST form (csrf_field()). Cross-site pages can neither read the cookie nor guess the value.
+    tok = request.cookies.get(CSRF_COOKIE, "")
+    new_tok = not (20 <= len(tok) <= 64 and tok.replace("-", "").replace("_", "").isalnum())
+    if new_tok:
+        tok = secrets.token_urlsafe(32)
+    request.state.csrf_token = tok
     resp = await call_next(request)
+    if new_tok:
+        resp.set_cookie(CSRF_COOKIE, tok, httponly=True, samesite="lax", secure=SECURE_COOKIE, max_age=400 * 86400)
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
-    resp.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; frame-ancestors 'none'"
+    # form-action must allow the redirect to Stripe's hosted checkout after POST /checkout.
+    resp.headers["Content-Security-Policy"] = ("default-src 'self'; style-src 'self'; img-src 'self' data:; "
+                                               "form-action 'self' https://checkout.stripe.com; frame-ancestors 'none'")
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+class CSRFError(Exception):
+    pass
+
+
+async def verify_csrf(request: Request):
+    form = await request.form()  # cached by Starlette; the route's own Form/File params reuse it
+    sent = str(form.get("csrf_token") or request.headers.get("x-csrf-token") or "")
+    cookie = request.cookies.get(CSRF_COOKIE, "")
+    if not cookie or not sent or not secrets.compare_digest(sent, cookie):
+        raise CSRFError()
+
+
+@app.exception_handler(CSRFError)
+async def csrf_failed(request: Request, _exc):
+    return render(request, "error.html", {"title": "Form expired",
+                  "message": "For your security this form needs a fresh page. Go back, reload the page and try again."}, 403)
+
+
+CSRF = [Depends(verify_csrf)]
+
+
+# ---------- entitlement (Unlock) helpers ----------
+def upsert_entitlement(db: Session, session_id: str, *, nonce_hash: str | None = None,
+                       payment_intent: str | None = None, source: str = "stripe") -> Entitlement:
+    """Idempotent: one row per Checkout Session no matter how many times webhook/success page race."""
+    ent = db.scalar(select(Entitlement).where(Entitlement.stripe_session_id == session_id))
+    if ent is None:
+        ent = Entitlement(stripe_session_id=session_id, token_hash=pay.sha256(pay.make_token(session_id)),
+                          nonce_hash=nonce_hash, payment_intent=payment_intent, status="paid", source=source,
+                          created_at=datetime.now(timezone.utc))
+        db.add(ent)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            ent = db.scalar(select(Entitlement).where(Entitlement.stripe_session_id == session_id))
+    else:
+        changed = False
+        if nonce_hash and not ent.nonce_hash:
+            ent.nonce_hash, changed = nonce_hash, True
+        if payment_intent and not ent.payment_intent:
+            ent.payment_intent, changed = payment_intent, True
+        if changed:
+            db.commit()
+    return ent
+
+
+def entitlement_for_token(db: Session, token: str | None) -> Entitlement | None:
+    session_id = pay.verify_token(token)
+    if not session_id:
+        return None
+    ent = db.scalar(select(Entitlement).where(Entitlement.stripe_session_id == session_id))
+    if ent is None and pay.payments_enabled() and session_id.startswith("cs_"):
+        # DB was wiped (free hosting) or webhook not processed yet: the signed code is still valid — re-check with Stripe.
+        try:
+            sess = pay.retrieve_session(session_id)
+        except (pay.StripeError, httpx.HTTPError) as e:
+            log.warning("could not re-verify unlock with Stripe: %s", e)
+            return None
+        if pay.session_is_paid_unlock(sess) and not pay.session_refunded(sess):
+            ent = upsert_entitlement(db, session_id, nonce_hash=(sess.get("metadata") or {}).get("nonce_hash"),
+                                     payment_intent=pay.payment_intent_id(sess))
+    return ent if ent is not None and ent.status == "paid" else None
+
+
+def current_entitlement(request: Request, db: Session) -> Entitlement | None:
+    if not hasattr(request.state, "entitlement"):
+        request.state.entitlement = entitlement_for_token(db, request.cookies.get(UNLOCK_COOKIE))
+    return request.state.entitlement
+
+
+def set_unlock_cookie(resp: Response, token: str):
+    resp.set_cookie(UNLOCK_COOKIE, token, httponly=True, samesite="lax", secure=SECURE_COOKIE, max_age=400 * 86400)
+
+
+def merge_sessions(db: Session, src: str, dst: str):
+    """Move transactions/reminders from session src into dst (duplicates skipped), then drop src."""
+    if src == dst:
+        return
+    store_txns(db, dst, load_txns(db, src))
+    for r in db.scalars(select(Reminder).where(Reminder.session_id == src)):
+        r.session_id = dst
+    db.commit()
+    dbm.delete_session_data(db, src)
 
 
 # ---------- session helpers ----------
 def current_sid(request: Request, db: Session) -> str | None:
     sid = request.cookies.get(COOKIE)
-    if not sid:
-        return None
-    s = db.get(UserSession, sid)
+    s = db.get(UserSession, sid) if sid else None
+    if not s and request.cookies.get(UNLOCK_COOKIE):
+        ent = current_entitlement(request, db)  # unlocked browser with opted-in saved history
+        if ent and ent.saved_session_id:
+            sid, s = ent.saved_session_id, db.get(UserSession, ent.saved_session_id)
     if not s:
         return None
     s.last_seen = datetime.now(timezone.utc)
@@ -78,8 +204,9 @@ def ensure_sid(request: Request, db: Session) -> tuple[str, bool]:
     return sid, True
 
 
-def set_cookie(resp: Response, sid: str):
-    resp.set_cookie(COOKIE, sid, httponly=True, samesite="lax", secure=SECURE_COOKIE, max_age=dbm.RETENTION_DAYS * 86400)
+def set_cookie(resp: Response, sid: str, saved: bool = False):
+    days = dbm.SAVED_RETENTION_DAYS if saved else dbm.RETENTION_DAYS
+    resp.set_cookie(COOKIE, sid, httponly=True, samesite="lax", secure=SECURE_COOKIE, max_age=days * 86400)
 
 
 def load_txns(db: Session, sid: str | None) -> list[Txn]:
@@ -106,7 +233,16 @@ def store_txns(db: Session, sid: str, txns: list[Txn]) -> int:
 
 def render(request: Request, name: str, ctx: dict | None = None, status: int = 200):
     ctx = ctx or {}
-    ctx.setdefault("has_data", bool(request.cookies.get(COOKIE)))
+    ent = getattr(request.state, "entitlement", None)
+    if not hasattr(request.state, "entitlement") and request.cookies.get(UNLOCK_COOKIE) and dbm.SessionLocal is not None:
+        with dbm.SessionLocal() as db:
+            ent = current_entitlement(request, db)
+    ctx.setdefault("unlocked", ent is not None)
+    ctx.setdefault("has_data", bool(request.cookies.get(COOKIE)) or bool(ent and ent.saved_session_id))
+    ctx.setdefault("pay_mode", pay.mode())
+    ctx.setdefault("price", pay.price_display())
+    ctx.setdefault("persistent", persistent_storage())
+    ctx.setdefault("support_email", pay.env("SUPPORT_EMAIL"))
     return templates.TemplateResponse(request, name, ctx, status_code=status)
 
 
@@ -129,11 +265,12 @@ async def _ingest(request: Request, db: Session, txns: list[Txn]):
     sid, new = ensure_sid(request, db)
     added = store_txns(db, sid, txns)
     resp = RedirectResponse(f"/dashboard?added={added}&parsed={len(txns)}", status_code=303)
-    set_cookie(resp, sid)
+    sess = db.get(UserSession, sid)
+    set_cookie(resp, sid, saved=bool(sess and sess.saved))
     return resp
 
 
-@app.post("/upload")
+@app.post("/upload", dependencies=CSRF)
 async def upload(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
     raw = await file.read(MAX_UPLOAD + 1)
     if len(raw) > MAX_UPLOAD:
@@ -149,7 +286,7 @@ async def upload(request: Request, file: UploadFile = File(...), db: Session = D
     return await _ingest(request, db, txns)
 
 
-@app.post("/paste")
+@app.post("/paste", dependencies=CSRF)
 async def paste(request: Request, text: str = Form(...), db: Session = Depends(get_db)):
     if len(text) > MAX_UPLOAD:
         return render(request, "index.html", {"error": "Text too long (max 2 MB)."}, 413)
@@ -160,7 +297,7 @@ async def paste(request: Request, text: str = Form(...), db: Session = Depends(g
     return await _ingest(request, db, txns)
 
 
-@app.post("/sample")
+@app.post("/sample", dependencies=CSRF)
 async def sample(request: Request, db: Session = Depends(get_db)):
     txns = parse_csv((ROOT / "sample" / "sample_statement.csv").read_text())
     shift = date.today() - timedelta(days=2) - max(t.date for t in txns)  # make the demo look current
@@ -184,7 +321,7 @@ def dashboard(request: Request, added: int | None = None, parsed: int | None = N
     return render(request, "dashboard.html", {
         "subs": subs, "totals": totals(subs), "upcoming": upcoming(subs, today, 14), "today": today,
         "txn_count": len(txns), "range": (min(t.date for t in txns), max(t.date for t in txns)),
-        "added": added, "parsed": parsed,
+        "added": added, "parsed": parsed, "unlocked": current_entitlement(request, db) is not None,
     })
 
 
@@ -214,7 +351,7 @@ def reminders_page(request: Request, db: Session = Depends(get_db)):
     })
 
 
-@app.post("/reminders")
+@app.post("/reminders", dependencies=CSRF)
 def add_reminder(request: Request, merchant: str = Form(...), remind_on: date = Form(...), note: str = Form(""),
                  next_url: str = Form("/reminders"), db: Session = Depends(get_db)):
     sid, new = ensure_sid(request, db)
@@ -226,7 +363,7 @@ def add_reminder(request: Request, merchant: str = Form(...), remind_on: date = 
     return resp
 
 
-@app.post("/reminders/{rid}/delete")
+@app.post("/reminders/{rid}/delete", dependencies=CSRF)
 def delete_reminder(rid: int, request: Request, db: Session = Depends(get_db)):
     sid = current_sid(request, db)
     r = db.get(Reminder, rid)
@@ -238,6 +375,8 @@ def delete_reminder(rid: int, request: Request, db: Session = Depends(get_db)):
 
 @app.get("/calendar.ics")
 def calendar(request: Request, db: Session = Depends(get_db)):
+    if not current_entitlement(request, db):
+        return RedirectResponse("/pricing?feature=calendar", status_code=303)  # premium extra
     sid = current_sid(request, db)
     _, subs = analysis(db, sid)
     events = [{"uid": f"renew-{s.slug}-{s.next_date:%Y%m%d}", "date": s.next_date,
@@ -271,11 +410,11 @@ def privacy(request: Request):
     return render(request, "privacy.html", {"retention": dbm.RETENTION_DAYS})
 
 
-@app.post("/delete-my-data")
+@app.post("/delete-my-data", dependencies=CSRF)
 def delete_my_data(request: Request, db: Session = Depends(get_db)):
-    sid = request.cookies.get(COOKIE)
+    sid = current_sid(request, db) or request.cookies.get(COOKIE)
     if sid:
-        dbm.delete_session_data(db, sid)
+        dbm.delete_session_data(db, sid)  # also unlinks any saved history; the purchase record itself stays
     resp = RedirectResponse("/?deleted=1", status_code=303)
     resp.delete_cookie(COOKIE)
     return resp
@@ -294,6 +433,232 @@ def api_subscriptions(request: Request, db: Session = Depends(get_db)):
             "price_hike": ({**s.price_hike, "date": s.price_hike["date"].isoformat()} if s.price_hike else None),
             "flags": s.flags, "review": s.review,
         } for s in subs],
+    })
+
+
+# ---------- Unlock: pricing, checkout, webhook, restore ----------
+def _pending_nonce(request: Request) -> str | None:
+    n = request.cookies.get(PENDING_COOKIE)
+    return n if n and len(n) <= 64 else None
+
+
+def _unlock_ctx(request: Request, db: Session) -> dict:
+    ent = current_entitlement(request, db)
+    token = request.cookies.get(UNLOCK_COOKIE) if ent else None
+    saved = ent is not None and ent.saved_session_id is not None and db.get(UserSession, ent.saved_session_id) is not None
+    return {"ent": ent, "token": token, "saved": saved, "missing": pay.missing_config()}
+
+
+@app.get("/pricing", response_class=HTMLResponse)
+def pricing(request: Request, db: Session = Depends(get_db)):
+    ent = current_entitlement(request, db)
+    nonce = _pending_nonce(request)
+    if not ent and nonce:
+        # Paid, but the browser never made it back to the success page (tab closed) — webhook already recorded it.
+        claimed = db.scalar(select(Entitlement).where(Entitlement.nonce_hash == pay.sha256(nonce),
+                                                      Entitlement.status == "paid"))
+        if claimed:
+            return RedirectResponse(f"/checkout/success?session_id={claimed.stripe_session_id}", status_code=303)
+    return render(request, "pricing.html", _unlock_ctx(request, db))
+
+
+@app.post("/checkout", dependencies=CSRF)
+def checkout(request: Request, db: Session = Depends(get_db)):
+    if current_entitlement(request, db):
+        return RedirectResponse("/pricing", status_code=303)
+    if not pay.payments_enabled():
+        return render(request, "pricing.html", {**_unlock_ctx(request, db),
+                      "error": "Payments aren't switched on yet — nothing was charged."}, 503)
+    nonce = secrets.token_urlsafe(24)
+    try:
+        sess = pay.create_checkout_session(pay.sha256(nonce))
+    except (pay.StripeError, httpx.HTTPError) as e:
+        log.error("checkout session failed: %s", e)
+        return render(request, "pricing.html", {**_unlock_ctx(request, db),
+                      "error": "Couldn't reach the payment provider. Nothing was charged — please try again."}, 502)
+    url = sess.get("url") or ""
+    if not url.startswith("https://checkout.stripe.com/"):
+        log.error("unexpected checkout url: %r", url[:80])
+        return render(request, "pricing.html", {**_unlock_ctx(request, db), "error": "Payment setup error."}, 502)
+    resp = RedirectResponse(url, status_code=303)
+    resp.set_cookie(PENDING_COOKIE, nonce, httponly=True, samesite="lax", secure=SECURE_COOKIE, max_age=2 * 86400)
+    return resp
+
+
+@app.get("/checkout/success", response_class=HTMLResponse)
+def checkout_success(request: Request, session_id: str = "", db: Session = Depends(get_db)):
+    session_id = session_id[:255]
+    ent = current_entitlement(request, db)
+    if ent and ent.stripe_session_id == session_id:  # refresh / dev unlock
+        return render(request, "success.html", _unlock_ctx(request, db))
+    nonce = _pending_nonce(request)
+    if not session_id.startswith("cs_") or not nonce:
+        return render(request, "success.html", {"problem": "browser"}, 400)
+    ent = db.scalar(select(Entitlement).where(Entitlement.stripe_session_id == session_id))
+    if ent is None:
+        if not pay.payments_enabled():
+            return render(request, "success.html", {"problem": "browser"}, 400)
+        try:
+            sess = pay.retrieve_session(session_id)
+        except (pay.StripeError, httpx.HTTPError) as e:
+            log.warning("success page could not verify session: %s", e)
+            return render(request, "success.html", {"problem": "pending"}, 502)
+        if (sess.get("metadata") or {}).get("nonce_hash") != pay.sha256(nonce):
+            return render(request, "success.html", {"problem": "browser"}, 400)
+        if not pay.session_is_paid_unlock(sess):
+            return render(request, "success.html", {"problem": "pending"}, 202)
+        ent = upsert_entitlement(db, session_id, nonce_hash=pay.sha256(nonce), payment_intent=pay.payment_intent_id(sess))
+    elif ent.nonce_hash != pay.sha256(nonce):
+        return render(request, "success.html", {"problem": "browser"}, 400)
+    if ent.status != "paid":
+        return render(request, "success.html", {"problem": "refunded"}, 410)
+    token = pay.make_token(session_id)
+    request.state.entitlement = ent
+    resp = render(request, "success.html", {"ent": ent, "token": token, "saved": False, "unlocked": True})
+    set_unlock_cookie(resp, token)
+    resp.delete_cookie(PENDING_COOKIE)
+    return resp
+
+
+def _handle_event(db: Session, event: dict):
+    etype, obj = event.get("type", ""), (event.get("data") or {}).get("object") or {}
+    if etype in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        if pay.session_is_paid_unlock(obj):
+            upsert_entitlement(db, obj["id"], nonce_hash=(obj.get("metadata") or {}).get("nonce_hash"),
+                               payment_intent=pay.payment_intent_id(obj))
+    elif etype == "charge.refunded":
+        if obj.get("refunded") and obj.get("payment_intent"):  # full refund => revoke the unlock
+            for ent in db.scalars(select(Entitlement).where(Entitlement.payment_intent == obj["payment_intent"])):
+                ent.status = "refunded"
+            db.commit()
+
+
+@app.post("/stripe/webhook")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    # Deliberately no CSRF token: authenticity comes from Stripe's HMAC signature instead.
+    payload = await request.body()
+    if len(payload) > MAX_WEBHOOK:
+        return JSONResponse({"error": "payload too large"}, 413)
+    try:
+        event = pay.verify_webhook(payload, request.headers.get("stripe-signature"))
+    except pay.SignatureError as e:
+        log.warning("rejected webhook: %s", e)
+        return JSONResponse({"error": "invalid signature"}, 400)
+    eid = str(event.get("id") or "")
+    if not eid:
+        return JSONResponse({"error": "no event id"}, 400)
+    if db.get(WebhookEvent, eid):
+        return {"received": True, "duplicate": True}
+    _handle_event(db, event)  # raises => 500 => Stripe retries later (event not marked processed)
+    db.add(WebhookEvent(id=eid, type=str(event.get("type", ""))[:100], received_at=datetime.now(timezone.utc)))
+    try:
+        db.commit()
+    except IntegrityError:  # concurrent duplicate delivery; handlers are idempotent anyway
+        db.rollback()
+        return {"received": True, "duplicate": True}
+    return {"received": True}
+
+
+@app.post("/unlock/dev", dependencies=CSRF)
+def dev_unlock(request: Request, db: Session = Depends(get_db)):
+    if not pay.dev_unlock_enabled():
+        raise HTTPException(404)
+    session_id = "dev_" + secrets.token_urlsafe(16)
+    upsert_entitlement(db, session_id, source="dev")
+    resp = RedirectResponse(f"/checkout/success?session_id={session_id}", status_code=303)
+    set_unlock_cookie(resp, pay.make_token(session_id))
+    return resp
+
+
+@app.get("/restore", response_class=HTMLResponse)
+def restore_page(request: Request):
+    # The code travels in the URL *fragment* (/restore#code=…), which browsers never send to the server or logs;
+    # static/restore.js copies it into the form.
+    return render(request, "restore.html", {})
+
+
+@app.post("/restore", dependencies=CSRF)
+def restore(request: Request, code: str = Form(""), db: Session = Depends(get_db)):
+    code = code.strip()
+    ent = entitlement_for_token(db, code)
+    if not ent:
+        return render(request, "restore.html", {"error": "That code isn't valid (or the purchase was refunded)."}, 400)
+    request.state.entitlement = ent
+    resp = RedirectResponse("/pricing?restored=1", status_code=303)
+    set_unlock_cookie(resp, code)
+    if ent.saved_session_id and db.get(UserSession, ent.saved_session_id):
+        here = request.cookies.get(COOKIE)
+        if here and db.get(UserSession, here):
+            merge_sessions(db, here, ent.saved_session_id)  # bring anything uploaded in this browser along
+        set_cookie(resp, ent.saved_session_id, saved=True)
+        resp.headers["location"] = "/dashboard"
+    return resp
+
+
+@app.post("/unlock/forget", dependencies=CSRF)
+def forget_unlock(request: Request, db: Session = Depends(get_db)):
+    """Sign this browser out of the unlock (e.g. a shared computer). The code still works elsewhere."""
+    resp = RedirectResponse("/pricing?forgot=1", status_code=303)
+    resp.delete_cookie(UNLOCK_COOKIE)
+    ent = current_entitlement(request, db)
+    if ent and ent.saved_session_id and request.cookies.get(COOKIE) == ent.saved_session_id:
+        resp.delete_cookie(COOKIE)
+    return resp
+
+
+@app.post("/history/save", dependencies=CSRF)
+def history_save(request: Request, db: Session = Depends(get_db)):
+    ent = current_entitlement(request, db)
+    if not ent:
+        return RedirectResponse("/pricing?feature=history", status_code=303)
+    if not persistent_storage():
+        return RedirectResponse("/pricing", status_code=303)
+    sid, _ = ensure_sid(request, db)
+    if ent.saved_session_id and ent.saved_session_id != sid and db.get(UserSession, ent.saved_session_id):
+        merge_sessions(db, sid, ent.saved_session_id)
+        sid = ent.saved_session_id
+    ent.saved_session_id = sid
+    db.get(UserSession, sid).saved = True
+    db.commit()
+    resp = RedirectResponse("/pricing?saved=1", status_code=303)
+    set_cookie(resp, sid, saved=True)
+    return resp
+
+
+@app.post("/history/stop", dependencies=CSRF)
+def history_stop(request: Request, db: Session = Depends(get_db)):
+    ent = current_entitlement(request, db)
+    if ent and ent.saved_session_id:
+        sess = db.get(UserSession, ent.saved_session_id)
+        if sess:
+            sess.saved = False  # back to normal auto-delete after RETENTION_DAYS of inactivity
+            sess.last_seen = datetime.now(timezone.utc)
+        ent.saved_session_id = None
+        db.commit()
+        resp = RedirectResponse("/pricing?stopped=1", status_code=303)
+        if sess:
+            set_cookie(resp, sess.id)
+        return resp
+    return RedirectResponse("/pricing", status_code=303)
+
+
+@app.get("/alerts", response_class=HTMLResponse)
+def alerts(request: Request, db: Session = Depends(get_db)):
+    sid = current_sid(request, db)
+    txns, subs = analysis(db, sid)
+    unlocked = current_entitlement(request, db) is not None
+    hikes = [s for s in subs if s.price_hike]  # the headline flags stay free
+    history = []
+    if unlocked:
+        for s in subs:
+            ch = price_changes(s)
+            if ch:
+                history.append((s, ch))
+        history.sort(key=lambda x: max(c["date"] for c in x[1]), reverse=True)
+    return render(request, "alerts.html", {
+        "subs": subs, "hikes": hikes, "history": history, "txn_count": len(txns),
+        "range": (min(t.date for t in txns), max(t.date for t in txns)) if txns else None,
+        "paid_extra_total": round(sum(c["paid_extra"] for _, ch in history for c in ch if c["new"] > c["old"]), 2),
     })
 
 

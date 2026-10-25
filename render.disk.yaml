@@ -19,6 +19,23 @@ services:
         value: 7
       - key: SECURE_COOKIES
         value: 1
+      - key: PERSISTENT_STORAGE       # disk survives restarts: saved history is offered
+        value: 1
+      # --- One-time Unlock (Stripe Checkout). Leave the sync:false secrets empty and the unlock shows "coming soon". ---
+      - key: STRIPE_SECRET_KEY        # sk_test_… while testing, sk_live_… to take real payments
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET    # whsec_… from the Stripe webhook endpoint for <APP_BASE_URL>/stripe/webhook
+        sync: false
+      - key: UNLOCK_SECRET            # signs unlock codes; Render generates it once — never change it or codes break
+        generateValue: true
+      - key: APP_BASE_URL             # e.g. https://subscription-watchdog.onrender.com (no trailing slash)
+        sync: false
+      - key: STRIPE_PRICE_ID          # optional price_…; if empty an inline $7.00 price is used
+        sync: false
+      - key: UNLOCK_PRICE_CENTS       # display price + inline price; keep in sync with STRIPE_PRICE_ID
+        value: 700
+      - key: SUPPORT_EMAIL            # refund requests go here; REQUIRED before live keys are accepted
+        sync: false
     disk:
       name: watchdog-data
       mountPath: /var/data

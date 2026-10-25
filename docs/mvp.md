@@ -15,7 +15,10 @@
 ## Non-goals (MVP)
 - No bank login/aggregator (Plaid etc.), no storing credentials — ever.
 - No accounts/passwords, no email/SMS/push sending, no concierge cancellation, no bill negotiation.
-- No PDF statement parsing (paste text instead), no budgeting/credit score, no mobile app, no payments.
+- No PDF statement parsing (paste text instead), no budgeting/credit score, no mobile app.
+
+## Added after MVP
+- Optional one-time **Unlock** (Stripe Checkout, default $7): opt-in saved history via recovery link, full price-change history, .ics calendar export. Free tier keeps import, detection, totals, price-hike flags, cancel guides and in-app reminders.
 
 ## Differentiation
 1. **Privacy-first:** file-in, analysis, delete — no bank credentials, minimal retention, no third-party trackers.

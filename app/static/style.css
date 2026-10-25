@@ -64,3 +64,17 @@ code{background:#f1f5f9;padding:1px 5px;border-radius:5px}
   table:not(.compact) td{display:flex;justify-content:space-between;border:0;padding:4px 14px;text-align:right}
   table:not(.compact) td::before{content:attr(data-l);color:var(--muted);font-size:.8rem;text-align:left;margin-right:12px}
 }
+/* unlock / pricing */
+.pill{border:1px solid var(--brand);border-radius:999px;padding:4px 12px;color:var(--brand)!important}
+.pill.ok{background:var(--okbg);border-color:#a7f3d0}
+.notice.beta{background:var(--amberbg);border-color:#fcd34d;color:var(--amber)}
+.section-h{margin-top:28px}
+.pricing .card{margin:16px 0}.pricing .highlight{border:2px solid var(--brand)}
+.price{font-size:2rem;font-weight:700;margin:.2em 0}.price small{font-size:.9rem;color:var(--muted);font-weight:500}
+ul.checks{padding-left:0;list-style:none}ul.checks li{padding:4px 0 4px 26px;position:relative}
+ul.checks li::before{content:"✓";position:absolute;left:4px;color:var(--brand);font-weight:700}
+.btn.big{padding:14px 22px;font-size:1.05rem}.btn[disabled]{background:#94a3b8;cursor:not-allowed}
+.mt{margin-top:12px}
+.recovery{word-break:break-all;font-family:ui-monospace,Menlo,monospace;font-size:.85rem}
+.locked{background:#f8fafc;border-style:dashed}
+.up{color:var(--red);font-weight:600}.down{color:var(--brand);font-weight:600}

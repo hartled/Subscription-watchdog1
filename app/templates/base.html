@@ -13,13 +13,16 @@
     <a class="brand" href="/"><img src="/static/favicon.svg" alt="" width="24" height="24"> Subscription Watchdog</a>
     <nav>
       {% if has_data %}<a href="/dashboard">Dashboard</a>{% endif %}
+      <a href="/alerts">Price alerts</a>
       <a href="/reminders">Reminders</a>
       <a href="/guides">Cancel guides</a>
       <a href="/privacy">Privacy</a>
+      {% if unlocked %}<a class="pill ok" href="/pricing">✓ Unlocked</a>{% else %}<a class="pill" href="/pricing">Unlock</a>{% endif %}
     </nav>
   </div>
 </header>
 <main class="wrap">
+{% if not persistent %}<div class="notice beta small">Free beta hosting: our server's storage can be wiped when it restarts, so your uploaded data may disappear sooner than {{ retention_days }} days — re-uploading takes seconds. Unlock purchases are never lost: your unlock code always works.</div>{% endif %}
 {% block content %}{% endblock %}
 </main>
 <footer class="wrap foot">
@@ -27,11 +30,11 @@
   {% if has_data %}
   <details class="danger-zone">
     <summary>Delete my data</summary>
-    <form method="post" action="/delete-my-data"><p>This permanently deletes your uploaded transactions and reminders from our server.</p>
+    <form method="post" action="/delete-my-data">{{ csrf_field() }}<p>This permanently deletes your uploaded transactions and reminders (including saved history, if you turned it on) from our server.</p>
       <button class="btn danger" type="submit">Yes, delete everything now</button></form>
   </details>
   {% endif %}
-  <p class="muted">© Subscription Watchdog · <a href="/privacy">Privacy</a></p>
+  <p class="muted">© Subscription Watchdog · <a href="/privacy">Privacy</a> · <a href="/pricing">Pricing &amp; refunds</a> · <a href="/restore">Restore an unlock</a></p>
 </footer>
 </body>
 </html>

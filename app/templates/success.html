@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Unlock · Subscription Watchdog{% endblock %}
+{% block content %}
+{% if problem == 'browser' %}
+  <h1>Almost there</h1>
+  <div class="card"><p>We couldn't confirm this purchase in this browser. Please open this page in the same browser you paid with.
+  If you paid and still can't unlock, contact us {% if support_email %}at <a href="mailto:{{ support_email }}">{{ support_email }}</a>{% else %}(support contact coming soon){% endif %} with the date and amount from your Stripe receipt.</p></div>
+{% elif problem == 'pending' %}
+  <h1>Confirming your payment…</h1>
+  <div class="card"><p>Your payment is still being confirmed. Reload this page in a minute. You won't be charged twice.</p></div>
+{% elif problem == 'refunded' %}
+  <h1>This purchase was refunded</h1>
+  <div class="card"><p>The unlock for this payment is no longer active. Everything in the free plan keeps working.</p></div>
+{% else %}
+  <h1>🎉 Unlocked — thank you!</h1>
+  {% if ent and ent.source == 'dev' %}<div class="notice">DEV_UNLOCK simulation — no payment was made.</div>{% endif %}
+  <div class="card">
+    <h2>Save your recovery link now</h2>
+    <p>We don't ask for an email, so this link is how you restore the unlock{% if persistent %} and saved history{% endif %} on another browser or device. Bookmark it or keep it in your password manager. Anyone with the link can use your unlock, so keep it private.</p>
+    <p><a class="recovery" href="/restore#code={{ token }}">/restore#code={{ token }}</a></p>
+    <details><summary class="small">Show code only</summary><code class="recovery">{{ token }}</code></details>
+  </div>
+  <div class="card">
+    <h2>What's next</h2>
+    <ul class="plain">
+      <li><a href="/alerts">See your full price-change history →</a></li>
+      <li><a href="/reminders">Download calendar reminders (.ics) →</a></li>
+      {% if persistent %}<li><a href="/pricing">Turn on saved history →</a></li>{% endif %}
+    </ul>
+  </div>
+{% endif %}
+{% endblock %}

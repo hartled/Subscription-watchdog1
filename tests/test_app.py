@@ -1,16 +1,18 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from conftest import csrf_client
+
 
 @pytest.fixture()
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "t.db"))
     from app.main import app
     with TestClient(app) as c:
-        yield c
+        yield csrf_client(c)
 
 
-def test_full_flow(client):
+def test_full_flow(client, monkeypatch):
     assert client.get("/healthz").json() == {"ok": True}
     assert "No bank login" in client.get("/").text
     r = client.post("/sample", follow_redirects=True)
@@ -23,6 +25,9 @@ def test_full_flow(client):
     assert "general" in r.text.lower() or "most" in r.text
     r = client.post("/reminders", data={"merchant": "Netflix", "remind_on": "2030-01-01", "note": "decide"}, follow_redirects=True)
     assert "decide" in r.text
+    assert client.get("/calendar.ics", follow_redirects=False).status_code == 303  # .ics is a premium extra
+    monkeypatch.setenv("DEV_UNLOCK", "1")
+    client.post("/unlock/dev")
     ics = client.get("/calendar.ics")
     assert ics.headers["content-type"].startswith("text/calendar")
     assert "BEGIN:VCALENDAR" in ics.text and "Review: Netflix" in ics.text and "Netflix renews" in ics.text
@@ -57,4 +62,5 @@ def test_sessions_are_isolated(client, tmp_path):
     from app.main import app
     client.post("/sample")
     with TestClient(app) as other:
+        csrf_client(other)
         assert other.get("/api/subscriptions").json()["totals"]["count"] == 0

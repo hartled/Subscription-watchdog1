@@ -2,7 +2,9 @@
 {% block title %}Reminders · Subscription Watchdog{% endblock %}
 {% block content %}
 <h1>Reminders</h1>
-<p class="muted">Reminders live in this app and in your own calendar — we never send emails or texts. <a class="btn small" href="/calendar.ics">Download calendar (.ics)</a></p>
+<p class="muted">Reminders live in this app{% if unlocked %} and in your own calendar{% endif %} — we never send emails or texts.
+{% if unlocked %}<a class="btn small" href="/calendar.ics">Download calendar (.ics)</a>{% else %}<a class="btn ghost small" href="/pricing?feature=calendar">Calendar (.ics) export · Unlock</a>{% endif %}</p>
+{% if not unlocked and not persistent %}<p class="muted small">Heads-up: on our free beta hosting, in-app reminders can be wiped when the server restarts.</p>{% endif %}
 <div class="grid2">
 <div class="card">
   <h2>Your reminders</h2>
@@ -10,11 +12,12 @@
   <ul class="plain">{% for r in reminders %}
     <li class="{% if r.remind_on <= today %}due{% endif %}"><strong>{{ r.remind_on.strftime('%a %b %d, %Y') }}</strong> — {{ r.merchant }}{% if r.note %}: {{ r.note }}{% endif %}
       {% if r.remind_on <= today %}<span class="badge red">due</span>{% endif %}
-      <form method="post" action="/reminders/{{ r.id }}/delete" class="inline"><button class="link" type="submit">remove</button></form></li>
+      <form method="post" action="/reminders/{{ r.id }}/delete" class="inline">{{ csrf_field() }}<button class="link" type="submit">remove</button></form></li>
   {% endfor %}</ul>
   {% else %}<p class="muted">No reminders yet.</p>{% endif %}
   <h3>Add a reminder</h3>
   <form method="post" action="/reminders" class="stack">
+    {{ csrf_field() }}
     <label>Subscription <input name="merchant" list="subs" required maxlength="100"></label>
     <datalist id="subs">{% for s in subs %}<option value="{{ s.label }}">{% endfor %}</datalist>
     <label>Date <input type="date" name="remind_on" value="{{ today.isoformat() }}" required></label>

@@ -10,12 +10,14 @@
 
 <div class="grid2">
   <form class="card" method="post" action="/upload" enctype="multipart/form-data">
+    {{ csrf_field() }}
     <h2>1. Upload a CSV</h2>
     <p class="muted">Most US banks & cards: Chase, Amex, Capital One, Citi, Discover, BofA, Wells Fargo… Look for "Download transactions" → CSV. We auto-detect date/description/amount, debit/credit columns and sign conventions.</p>
     <label class="file"><input type="file" name="file" accept=".csv,text/csv,text/plain" required></label>
     <button class="btn" type="submit">Analyze CSV</button>
   </form>
   <form class="card" method="post" action="/paste">
+    {{ csrf_field() }}
     <h2>2. …or paste statement text</h2>
     <p class="muted">Copy the transaction lines from a PDF or online statement. One transaction per line, e.g. <code>01/15 NETFLIX.COM 15.49</code></p>
     <textarea name="text" rows="7" placeholder="10/03 NETFLIX.COM 866-579-7172 CA 17.99&#10;10/12 Spotify USA 11.99" required>{{ pasted or '' }}</textarea>
@@ -23,13 +25,15 @@
   </form>
 </div>
 <div class="card center">
-  <form method="post" action="/sample" class="inline"><button class="btn ghost" type="submit">Try it with sample data</button></form>
+  <form method="post" action="/sample" class="inline">{{ csrf_field() }}<button class="btn ghost" type="submit">Try it with sample data</button></form>
   <a class="muted" href="/sample.csv">Download the sample CSV</a>
 </div>
+<h2 class="section-h">Free — no catch</h2>
 <section class="features">
   <div><h3>🔒 Privacy-first</h3><p>Files only — no bank credentials. Card/account numbers are masked, data auto-deletes after {{ retention_days }} days, or instantly with one click.</p></div>
-  <div><h3>📈 Price-hike alerts</h3><p>See when a service quietly raised its price and what it costs you per year.</p></div>
+  <div><h3>📈 Price-hike flags</h3><p>See when a service quietly raised its price and what it costs you per year.</p></div>
   <div><h3>✂️ Cancel guides</h3><p>Step-by-step instructions and official links for popular services.</p></div>
-  <div><h3>📅 Reminders</h3><p>Upcoming renewals and a calendar file (.ics) for any calendar app.</p></div>
+  <div><h3>📅 Renewal dates</h3><p>Expected renewal dates, a "renewing soon" list and in-app reminders.</p></div>
 </section>
+<p class="muted small">Detection, totals, price-hike flags, cancel guides and in-app reminders are free with no limits. An optional one-time <a href="/pricing">{{ price }} Unlock</a> adds saved history, a full price-change history and calendar (.ics) reminders.</p>
 {% endblock %}

@@ -11,13 +11,24 @@
   <li>Data is deleted automatically after {{ retention }} days of inactivity, or immediately when you click <em>Delete my data</em> (bottom of every page). Deletion removes the database rows and SQLite overwrites the freed space.</li>
   <li>No ads, no third-party analytics or trackers, no selling or sharing of data. We don't send emails or messages.</li>
   <li>Reminders are delivered only inside this app and via a calendar file you download yourself.</li>
+  <li><strong>Payments (optional Unlock):</strong> handled entirely by Stripe on Stripe's own checkout page. <strong>We never see or store your card details.</strong> Stripe may ask for your email to send a receipt; we don't store it.</li>
 </ul>
+<h2>If you buy the Unlock</h2>
+<ul>
+  <li>We store only a purchase record: the Stripe checkout session ID, the payment reference (used to honour refunds), a one-way hash of your unlock code, the date, and whether it was refunded. No name, email or card data.</li>
+  <li>Your unlock code is shown to you once after checkout and kept in a cookie in your browser. Anyone with the code can use your unlock, so keep it private.</li>
+  <li>Stripe processes your payment under <a href="https://stripe.com/privacy" target="_blank" rel="noopener noreferrer">Stripe's privacy policy</a>. They see what you type at checkout; we don't.</li>
+  <li><strong>Saved history is opt-in.</strong> Unless you turn it on, your data follows the same {{ retention }}-day auto-delete as everyone else's. If you turn it on, your transactions and reminders are kept until {{ saved_retention_days }} days without a visit, or until you turn it off or click <em>Delete my data</em>. They're tied to your unlock code, not to your identity.</li>
+  <li>Deleting your data removes transactions, reminders and saved history. We keep the purchase record (no personal data) so your unlock and refund rights keep working.</li>
+</ul>
+{% if not persistent %}<h2>Free beta hosting</h2>
+<p>We currently run on hosting whose storage is wiped when the server restarts or redeploys. Uploaded data can disappear earlier than {{ retention }} days. That's a limitation, not a privacy risk: it only means data is deleted sooner.</p>{% endif %}
 <h2>Cookies</h2>
-<p>One strictly necessary cookie (<code>sw_session</code>, HttpOnly) identifies your session. Clearing it disconnects you from your data, which is then auto-deleted.</p>
+<p>Strictly necessary cookies only, all HttpOnly: <code>sw_session</code> (random ID for your uploaded data), <code>sw_csrf</code> (random anti-forgery token for forms), and if you buy the Unlock, <code>sw_unlock</code> (your unlock code) and briefly <code>sw_checkout</code> (links a checkout to your browser). Clearing <code>sw_session</code> disconnects you from your data, which is then auto-deleted.</p>
 <h2>Security</h2>
 <p>Use the hosted version only over HTTPS. Uploads are limited to 2 MB. Don't upload files containing more than you need — most banks let you export just a date range.</p>
 <h2>Your rights</h2>
-<p>You can delete everything at any time. Because we hold no identity information, we can't look up your data for you — use the delete button in the same browser. California residents: we do not sell or share personal information.</p>
+<p>You can delete everything at any time. Because we hold no identity information, we can't look up your data for you — use the delete button in the same browser (or in any browser where you restored your unlock code, if you use saved history). California residents: we do not sell or share personal information.</p>
 <h2>Disclaimer</h2>
 <p>Subscription Watchdog is an informational tool. Detection is automatic and can miss or misidentify charges. It is not financial, legal or tax advice and is not affiliated with any bank or with the services named in our guides; trademarks belong to their owners.</p>
 </div>

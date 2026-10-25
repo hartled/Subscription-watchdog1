@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Restore unlock · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Restore your unlock</h1>
+{% if error %}<div class="notice err" role="alert">{{ error }}</div>{% endif %}
+<form class="card stack" method="post" action="/restore">
+  {{ csrf_field() }}
+  <p>Open your recovery link, or paste the code you saved after purchase.{% if persistent %} If you turned on saved history, it comes back too.{% endif %}</p>
+  <label>Recovery code <input id="code" name="code" autocomplete="off" spellcheck="false" required placeholder="swu1.…"></label>
+  <button class="btn" type="submit">Restore</button>
+</form>
+<script src="/static/restore.js"></script>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Pricing · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Pricing</h1>
+{% set q = request.query_params %}
+{% if q.get('canceled') %}<div class="notice">Checkout canceled — you weren't charged.</div>{% endif %}
+{% if q.get('restored') %}<div class="notice ok">Unlock restored in this browser.</div>{% endif %}
+{% if q.get('saved') %}<div class="notice ok">Saved history is on. Open your recovery link on any device to get back to it.</div>{% endif %}
+{% if q.get('stopped') %}<div class="notice ok">Saved history is off. Your data now auto-deletes after {{ retention_days }} days of inactivity (or delete it now at the bottom of the page).</div>{% endif %}
+{% if q.get('forgot') %}<div class="notice ok">This browser no longer holds your unlock. Your code still works anywhere.</div>{% endif %}
+{% if q.get('feature') and not ent %}<div class="notice">{% if q.get('feature') == 'calendar' %}Calendar (.ics) export{% elif q.get('feature') == 'history' %}Saved history{% else %}That feature{% endif %} is part of the one-time Unlock. Everything else stays free.</div>{% endif %}
+{% if error %}<div class="notice err" role="alert">{{ error }}</div>{% endif %}
+
+<div class="grid2 pricing">
+  <div class="card">
+    <h2>Free</h2>
+    <p class="price">$0 <small>forever</small></p>
+    <ul class="checks">
+      <li>Unlimited CSV uploads &amp; pasted statements</li>
+      <li>Recurring-charge detection (weekly → yearly)</li>
+      <li>Monthly &amp; yearly totals</li>
+      <li>Price-hike flags (old → new price, extra $/yr)</li>
+      <li>"Worth reviewing" flags for easy-to-forget charges</li>
+      <li>All cancel guides</li>
+      <li>Expected renewal dates &amp; in-app reminders</li>
+    </ul>
+    <p class="muted small">Data auto-deletes after {{ retention_days }} days of inactivity{% if not persistent %} (sooner on our free beta hosting — see the note at the top){% endif %}.</p>
+  </div>
+  <div class="card highlight">
+    <h2>Unlock</h2>
+    <p class="price">{{ price }} <small>one time · no subscription</small></p>
+    <ul class="checks">
+      <li><strong>Saved history</strong> — opt in to keep your statements between visits and devices, retrieved with a private recovery link (no account, no password){% if not persistent %} <span class="badge grey">coming soon — needs permanent storage</span>{% endif %}</li>
+      <li><strong>Price-change history</strong> — every increase (and decrease) per service, with how much extra you've paid since</li>
+      <li><strong>Calendar reminders (.ics)</strong> — renewals and your reminders in Google/Apple/Outlook calendar, with a 3-day alert</li>
+    </ul>
+
+    {% if ent %}
+      <div class="notice ok"><strong>✓ Unlocked in this browser.</strong>{% if ent.source == 'dev' %} <span class="badge amber">dev simulation — not a real purchase</span>{% endif %}</div>
+      <h3>Your recovery link</h3>
+      <p class="small">Keep this somewhere safe (password manager, notes). It's the only way to restore the unlock{% if persistent %} and your saved history{% endif %} on another browser — we don't have your email.</p>
+      <p><a class="recovery" href="/restore#code={{ token }}">/restore#code={{ token }}</a></p>
+      <details><summary class="small">Show code only</summary><code class="recovery">{{ token }}</code></details>
+      {% if persistent %}
+      <h3>Saved history</h3>
+      {% if saved %}
+        <p class="small">On. Your statements and reminders are kept until {{ saved_retention_days }} days without a visit, or until you turn this off or delete them.</p>
+        <form method="post" action="/history/stop">{{ csrf_field() }}<button class="btn ghost small" type="submit">Turn off saved history</button></form>
+      {% else %}
+        <p class="small">Off. Turn it on to keep this browser's data beyond {{ retention_days }} days and reach it from other devices with your recovery link.</p>
+        <form method="post" action="/history/save">{{ csrf_field() }}<button class="btn small" type="submit">Save my history</button></form>
+      {% endif %}
+      {% endif %}
+      <form method="post" action="/unlock/forget" class="mt">{{ csrf_field() }}<button class="link" type="submit">Remove the unlock from this browser (shared computer)</button></form>
+    {% elif pay_mode in ('test', 'live') %}
+      <form method="post" action="/checkout">{{ csrf_field() }}<button class="btn big" type="submit">Unlock for {{ price }}</button></form>
+      <p class="muted small">Secure checkout by Stripe. We never see or store your card details.{% if pay_mode == 'test' %} <span class="badge amber">TEST MODE — use card 4242 4242 4242 4242, no real charge</span>{% endif %}</p>
+    {% elif pay_mode == 'dev' %}
+      <button class="btn big" type="button" disabled>Unlock for {{ price }} — coming soon</button>
+      <form method="post" action="/unlock/dev" class="mt">{{ csrf_field() }}<button class="btn ghost small" type="submit">Simulate unlock (DEV_UNLOCK — local testing, no payment)</button></form>
+    {% else %}
+      <button class="btn big" type="button" disabled>Unlock for {{ price }} — coming soon</button>
+      <p class="muted small">Payments aren't switched on yet. Everything in the free plan works fully in the meantime.</p>
+    {% endif %}
+    <p class="small"><a href="/restore">Already unlocked on another device? Restore it</a></p>
+  </div>
+</div>
+
+<div class="card prose" id="refunds">
+  <h2>Refund policy</h2>
+  <p>Not happy? Ask for a full refund within <strong>30 days</strong> of purchase, no questions asked. Email
+  {% if support_email %}<a href="mailto:{{ support_email }}">{{ support_email }}</a>{% else %}<em>[support contact coming soon]</em>{# TODO(D): set SUPPORT_EMAIL before going live #}{% endif %}
+  with your recovery code (or the date and amount from your Stripe receipt) so we can find the payment. Refunds go back to the original card through Stripe, usually within 5–10 business days. A refunded unlock stops working.</p>
+  <p class="muted small">The Unlock is a one-time digital purchase for this website; there are no recurring charges. Prices in USD; any applicable taxes are shown at checkout.</p>
+</div>
+{% endblock %}

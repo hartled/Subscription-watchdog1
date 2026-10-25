@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Price alerts · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Price alerts</h1>
+{% if not txn_count %}
+  <div class="card"><p>Upload a statement on the <a href="/">home page</a> to check for price increases.</p></div>
+{% else %}
+  <p class="muted">From {{ txn_count }} transactions, {{ range[0].strftime('%b %d, %Y') }} – {{ range[1].strftime('%b %d, %Y') }}.</p>
+  <div class="card">
+    <h2>Latest price hikes <span class="badge grey">free</span></h2>
+    {% if hikes %}<ul class="plain">{% for s in hikes %}
+      <li><a href="/subscription/{{ s.slug }}"><strong>{{ s.label }}</strong></a> — {{ money(s.price_hike.old) }} → {{ money(s.price_hike.new) }}
+      (+{{ s.price_hike.pct }}%) since {{ s.price_hike.date.strftime('%b %d, %Y') }}{% if s.price_hike.recent %} <span class="badge red">recent</span>{% endif %}</li>
+    {% endfor %}</ul>{% else %}<p>No price increases found in this data. 🎉</p>{% endif %}
+  </div>
+  {% if unlocked %}
+  <div class="card">
+    <h2>Full price-change history</h2>
+    {% if history %}
+      <p>Since these increases you've paid <strong>{{ money(paid_extra_total) }}</strong> more than the old prices (in the data you've uploaded).</p>
+      {% for s, changes in history %}
+      <h3><a href="/subscription/{{ s.slug }}">{{ s.label }}</a> <small class="muted">{{ s.cadence }}, now {{ money(s.current_amount) }}</small></h3>
+      <table class="compact"><thead><tr><th>Date</th><th class="num">Old</th><th class="num">New</th><th class="num">Change</th><th class="num">Per year</th><th class="num">Paid extra since</th></tr></thead><tbody>
+      {% for c in changes|reverse %}<tr><td>{{ c.date.strftime('%b %d, %Y') }}</td><td class="num">{{ money(c.old) }}</td><td class="num">{{ money(c.new) }}</td>
+        <td class="num">{% if c.new > c.old %}<span class="up">+{{ c.pct }}%</span>{% else %}<span class="down">{{ c.pct }}%</span>{% endif %}</td>
+        <td class="num">{{ '+' if c.yearly_delta > 0 else '' }}{{ money(c.yearly_delta) }}</td><td class="num">{{ money(c.paid_extra) }}</td></tr>{% endfor %}
+      </tbody></table>
+      {% endfor %}
+    {% else %}<p>No price changes in your history yet.{% if persistent %} With saved history on, each new upload extends the timeline.{% endif %}</p>{% endif %}
+  </div>
+  {% else %}
+  <div class="card locked">
+    <h2>Full price-change history <span class="badge amber">Unlock</span></h2>
+    <p>See every increase and decrease per service, the yearly impact of each, and exactly how much extra you've paid since{% if persistent %} — building up over time with saved history{% endif %}.</p>
+    <a class="btn" href="/pricing">See the {{ price }} one-time Unlock</a>
+  </div>
+  {% endif %}
+{% endif %}
+{% endblock %}
