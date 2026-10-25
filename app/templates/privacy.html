@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Privacy · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Privacy</h1>
+<div class="card prose">
+<h2>The short version</h2>
+<ul>
+  <li><strong>We never ask for, accept or store bank usernames, passwords or account-linking tokens.</strong> You give us a file or pasted text, nothing more.</li>
+  <li>We keep only what's needed to find subscriptions: each transaction's date, description and amount. Other CSV columns (balances, categories, memos, account numbers) are discarded at upload. Long digit sequences in descriptions (card/account/reference numbers) are masked before saving.</li>
+  <li>Your data is tied to a random, anonymous browser cookie — no account, name or email.</li>
+  <li>Data is deleted automatically after {{ retention }} days of inactivity, or immediately when you click <em>Delete my data</em> (bottom of every page). Deletion removes the database rows and SQLite overwrites the freed space.</li>
+  <li>No ads, no third-party analytics or trackers, no selling or sharing of data. We don't send emails or messages.</li>
+  <li>Reminders are delivered only inside this app and via a calendar file you download yourself.</li>
+</ul>
+<h2>Cookies</h2>
+<p>One strictly necessary cookie (<code>sw_session</code>, HttpOnly) identifies your session. Clearing it disconnects you from your data, which is then auto-deleted.</p>
+<h2>Security</h2>
+<p>Use the hosted version only over HTTPS. Uploads are limited to 2 MB. Don't upload files containing more than you need — most banks let you export just a date range.</p>
+<h2>Your rights</h2>
+<p>You can delete everything at any time. Because we hold no identity information, we can't look up your data for you — use the delete button in the same browser. California residents: we do not sell or share personal information.</p>
+<h2>Disclaimer</h2>
+<p>Subscription Watchdog is an informational tool. Detection is automatic and can miss or misidentify charges. It is not financial, legal or tax advice and is not affiliated with any bank or with the services named in our guides; trademarks belong to their owners.</p>
+</div>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Reminders · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Reminders</h1>
+<p class="muted">Reminders live in this app and in your own calendar — we never send emails or texts. <a class="btn small" href="/calendar.ics">Download calendar (.ics)</a></p>
+<div class="grid2">
+<div class="card">
+  <h2>Your reminders</h2>
+  {% if reminders %}
+  <ul class="plain">{% for r in reminders %}
+    <li class="{% if r.remind_on <= today %}due{% endif %}"><strong>{{ r.remind_on.strftime('%a %b %d, %Y') }}</strong> — {{ r.merchant }}{% if r.note %}: {{ r.note }}{% endif %}
+      {% if r.remind_on <= today %}<span class="badge red">due</span>{% endif %}
+      <form method="post" action="/reminders/{{ r.id }}/delete" class="inline"><button class="link" type="submit">remove</button></form></li>
+  {% endfor %}</ul>
+  {% else %}<p class="muted">No reminders yet.</p>{% endif %}
+  <h3>Add a reminder</h3>
+  <form method="post" action="/reminders" class="stack">
+    <label>Subscription <input name="merchant" list="subs" required maxlength="100"></label>
+    <datalist id="subs">{% for s in subs %}<option value="{{ s.label }}">{% endfor %}</datalist>
+    <label>Date <input type="date" name="remind_on" value="{{ today.isoformat() }}" required></label>
+    <label>Note <input name="note" maxlength="300" placeholder="e.g. Free trial ends — cancel"></label>
+    <button class="btn" type="submit">Add</button>
+  </form>
+</div>
+<div class="card">
+  <h2>Expected renewals</h2>
+  {% if renewals %}<ul class="plain">{% for s in renewals %}
+    <li class="{% if s.next_date <= soon %}due{% endif %}"><strong>{{ s.next_date.strftime('%b %d, %Y') }}</strong> — <a href="/subscription/{{ s.slug }}">{{ s.label }}</a> {{ money(s.current_amount) }}{% if s.next_date <= soon %} <span class="badge amber">soon</span>{% endif %}</li>
+  {% endfor %}</ul>
+  {% else %}<p class="muted">Upload a statement to see expected renewals.</p>{% endif %}
+</div>
+</div>
+{% endblock %}

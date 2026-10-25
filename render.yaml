@@ -1,0 +1,22 @@
+# Render Blueprint — FREE tier (no persistent disk).
+# On the free plan the filesystem is ephemeral: the SQLite file is wiped on every redeploy/restart and
+# the instance spins down when idle. For a session-scoped, auto-deleting app that's acceptable for an MVP.
+# Need data to survive deploys? Use render.disk.yaml instead (requires a PAID plan — see README).
+services:
+  - type: web
+    name: subscription-watchdog
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+    healthCheckPath: /healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: DATA_DIR
+        value: /tmp/watchdog-data
+      - key: RETENTION_DAYS
+        value: 7
+      - key: SECURE_COOKIES
+        value: 1

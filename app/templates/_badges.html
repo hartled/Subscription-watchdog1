@@ -1,0 +1,5 @@
+{% macro badges(s) %}
+{% if not s.active %}<span class="badge grey">stopped?</span>{% endif %}
+{% if s.price_hike %}<span class="badge red">▲ {{ money(s.price_hike.old) }} → {{ money(s.price_hike.new) }}</span>{% endif %}
+{% for f in s.flags %}{% if not f.startswith('Price') and not f.startswith('Looks') %}<span class="badge amber">{{ f }}</span>{% endif %}{% endfor %}
+{% endmacro %}

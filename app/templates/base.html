@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Subscription Watchdog{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <div class="wrap nav">
+    <a class="brand" href="/"><img src="/static/favicon.svg" alt="" width="24" height="24"> Subscription Watchdog</a>
+    <nav>
+      {% if has_data %}<a href="/dashboard">Dashboard</a>{% endif %}
+      <a href="/reminders">Reminders</a>
+      <a href="/guides">Cancel guides</a>
+      <a href="/privacy">Privacy</a>
+    </nav>
+  </div>
+</header>
+<main class="wrap">
+{% block content %}{% endblock %}
+</main>
+<footer class="wrap foot">
+  <p><strong>Disclaimer:</strong> Subscription Watchdog finds patterns in the transactions you provide. Results may be incomplete or wrong — always confirm with your bank or the merchant. Cancel guides are general information, not legal or financial advice; providers change their steps often. We never ask for bank logins.</p>
+  {% if has_data %}
+  <details class="danger-zone">
+    <summary>Delete my data</summary>
+    <form method="post" action="/delete-my-data"><p>This permanently deletes your uploaded transactions and reminders from our server.</p>
+      <button class="btn danger" type="submit">Yes, delete everything now</button></form>
+  </details>
+  {% endif %}
+  <p class="muted">© Subscription Watchdog · <a href="/privacy">Privacy</a></p>
+</footer>
+</body>
+</html>

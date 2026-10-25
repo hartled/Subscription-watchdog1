@@ -1,0 +1,8 @@
+{% macro guide_body(g) %}
+<ol class="steps">{% for st in g.steps %}<li>{{ st }}</li>{% endfor %}</ol>
+{% if g.url %}<p><a class="btn" href="{{ g.url }}" target="_blank" rel="noopener noreferrer">Open official {{ g.name }} page ↗</a>
+{% if g.help_url %} <a href="{{ g.help_url }}" target="_blank" rel="noopener noreferrer">Official help article ↗</a>{% endif %}</p>{% endif %}
+{% if g.links %}<ul>{% for name, url in g.links %}<li><a href="{{ url }}" target="_blank" rel="noopener noreferrer">{{ name }} ↗</a></li>{% endfor %}</ul>{% endif %}
+{% for n in g.notes %}<p class="muted small">ℹ️ {{ n }}</p>{% endfor %}
+<p class="muted small">Steps last reviewed Oct 2026 and may change — the provider's official page is the source of truth.</p>
+{% endmacro %}

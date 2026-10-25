@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_badges.html" import badges %}
+{% block title %}Dashboard · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Your recurring charges</h1>
+<p class="muted">{{ txn_count }} transactions from {{ range[0].strftime('%b %d, %Y') }} to {{ range[1].strftime('%b %d, %Y') }}.
+{% if added is not none %} Imported {{ added }} new of {{ parsed }} parsed.{% endif %} <a href="/">Add more</a></p>
+
+<div class="stats">
+  <div class="stat"><span>Per month</span><strong>{{ money(totals.monthly) }}</strong></div>
+  <div class="stat"><span>Per year</span><strong>{{ money(totals.yearly) }}</strong></div>
+  <div class="stat"><span>Active subscriptions</span><strong>{{ totals.count }}</strong></div>
+  <div class="stat {% if totals.hikes %}warn{% endif %}"><span>Price hikes</span><strong>{{ totals.hikes }}</strong>{% if totals.hikes %}<small>+{{ money(totals.hike_extra_yearly) }}/yr</small>{% endif %}</div>
+  <div class="stat {% if totals.flagged %}warn{% endif %}"><span>Worth reviewing</span><strong>{{ totals.flagged }}</strong></div>
+</div>
+
+{% if upcoming %}
+<div class="card">
+  <h2>Renewing in the next 14 days</h2>
+  <ul class="plain">{% for s in upcoming %}<li><strong>{{ s.next_date.strftime('%a %b %d') }}</strong> — <a href="/subscription/{{ s.slug }}">{{ s.label }}</a> {{ money(s.current_amount) }}</li>{% endfor %}</ul>
+  <a class="btn ghost small" href="/calendar.ics">Download calendar (.ics)</a>
+</div>
+{% endif %}
+
+{% if subs %}
+<div class="table-wrap card">
+<table>
+  <thead><tr><th>Service</th><th>Cadence</th><th class="num">Charge</th><th class="num">Monthly</th><th class="num">Yearly</th><th>Next (expected)</th><th>Flags</th><th></th></tr></thead>
+  <tbody>
+  {% for s in subs %}
+  <tr class="{% if not s.active %}inactive{% elif s.review %}review{% endif %}">
+    <td data-l="Service"><a href="/subscription/{{ s.slug }}"><strong>{{ s.label }}</strong></a><br><small class="muted">{{ s.count }} charges since {{ s.first_date.strftime('%b %Y') }}</small></td>
+    <td data-l="Cadence">{{ s.cadence }}</td>
+    <td data-l="Charge" class="num">{{ money(s.current_amount) }}</td>
+    <td data-l="Monthly" class="num">{{ money(s.monthly_cost) }}</td>
+    <td data-l="Yearly" class="num">{{ money(s.yearly_cost) }}</td>
+    <td data-l="Next">{% if s.active %}{{ s.next_date.strftime('%b %d, %Y') }}{% else %}—{% endif %}</td>
+    <td data-l="Flags">{{ badges(s) }}</td>
+    <td><a class="btn small" href="/subscription/{{ s.slug }}">{% if s.active %}Cancel guide{% else %}Details{% endif %}</a></td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted small">"Worth reviewing" = two or more signals (long-running, small, annual, price increase) or a recent price increase. We can't see whether you actually use a service — only you know that. Inactive (stopped?) items are excluded from totals.</p>
+{% else %}
+<div class="card"><p>No recurring charges detected yet. Try uploading a longer date range (3+ months; 13+ months to catch annual renewals).</p></div>
+{% endif %}
+{% endblock %}

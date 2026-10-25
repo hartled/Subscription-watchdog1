@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Cancel guides · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Cancel guides</h1>
+<p class="muted">Step-by-step instructions with links to each provider's official page. Don't see yours? Use the <a href="/guides/generic">general guide</a>.</p>
+<div class="guide-grid">
+{% for g in guides %}<a class="card guide-tile" href="/guides/{{ g.slug }}">{{ g.name }}</a>{% endfor %}
+<a class="card guide-tile alt" href="/guides/generic">Anything else →</a>
+</div>
+{% endblock %}

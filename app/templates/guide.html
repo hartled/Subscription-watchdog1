@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% from "_guide.html" import guide_body %}
+{% block title %}Cancel {{ guide.name }} · Subscription Watchdog{% endblock %}
+{% block content %}
+<p><a href="/guides">← All guides</a></p>
+<h1>How to cancel {{ guide.name }}</h1>
+<div class="card">{{ guide_body(guide) }}</div>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% from "_badges.html" import badges %}
+{% from "_guide.html" import guide_body %}
+{% block title %}{{ s.label }} · Subscription Watchdog{% endblock %}
+{% block content %}
+<p><a href="/dashboard">← Dashboard</a></p>
+<h1>{{ s.label }}</h1>
+<p>{{ badges(s) }}</p>
+<div class="stats">
+  <div class="stat"><span>Charge</span><strong>{{ money(s.current_amount) }}</strong><small>{{ s.cadence }}</small></div>
+  <div class="stat"><span>Monthly</span><strong>{{ money(s.monthly_cost) }}</strong></div>
+  <div class="stat"><span>Yearly</span><strong>{{ money(s.yearly_cost) }}</strong></div>
+  <div class="stat"><span>Next expected</span><strong>{% if s.active %}{{ s.next_date.strftime('%b %d') }}{% else %}—{% endif %}</strong></div>
+</div>
+{% if s.price_hike %}<div class="notice err">Price went from {{ money(s.price_hike.old) }} to {{ money(s.price_hike.new) }} (+{{ s.price_hike.pct }}%) starting {{ s.price_hike.date.strftime('%b %d, %Y') }}.</div>{% endif %}
+
+<div class="grid2">
+  <div class="card">
+    <h2>How to cancel</h2>
+    {% if guide.slug == 'generic' %}<p class="muted">We don't have a specific guide for this merchant yet — here's what works for most.</p>{% endif %}
+    {{ guide_body(guide) }}
+  </div>
+  <div class="card">
+    <h2>Remind me</h2>
+    <form method="post" action="/reminders" class="stack">
+      <input type="hidden" name="merchant" value="{{ s.label }}">
+      <input type="hidden" name="next_url" value="/subscription/{{ s.slug }}">
+      <label>Date <input type="date" name="remind_on" value="{{ default_remind.isoformat() }}" required></label>
+      <label>Note <input type="text" name="note" maxlength="300" value="Decide whether to keep {{ s.label }} before it renews"></label>
+      <button class="btn" type="submit">Add reminder</button>
+    </form>
+    {% if reminders %}<ul class="plain">{% for r in reminders %}<li>📅 {{ r.remind_on.strftime('%b %d, %Y') }} — {{ r.note }}</li>{% endfor %}</ul>{% endif %}
+    <p class="small"><a href="/calendar.ics">Download all renewals & reminders (.ics)</a></p>
+    <h2>Charge history</h2>
+    <table class="compact"><tbody>{% for t in s.charges|reverse %}<tr><td>{{ t.date.strftime('%b %d, %Y') }}</td><td class="num">{{ money(t.amount) }}</td><td class="muted small">{{ t.description }}</td></tr>{% endfor %}</tbody></table>
+  </div>
+</div>
+{% endblock %}
