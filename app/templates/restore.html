@@ -9,5 +9,6 @@
   <label>Recovery code <input id="code" name="code" autocomplete="off" spellcheck="false" required placeholder="swu1.…"></label>
   <button class="btn" type="submit">Restore</button>
 </form>
+{% if email_recovery %}<p class="small"><a href="/recover">Lost your link? If you opted in to email recovery, we can email it to you →</a></p>{% endif %}
 <script src="/static/restore.js"></script>
 {% endblock %}

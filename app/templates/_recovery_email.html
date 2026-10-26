@@ -1,0 +1,15 @@
+<h3>Email recovery <span class="badge grey">optional</span></h3>
+{% if not email_recovery %}
+  <p class="small muted">Email recovery: <strong>not available yet</strong>. For now, your saved recovery link is the only way to restore the unlock.</p>
+{% elif email_on_file %}
+  <p class="small">✓ An email is on file for this unlock. If you lose your link, use <a href="/recover">Email me my link</a>. We store only a one-way fingerprint of the address, never the address itself.</p>
+  <form method="post" action="/recovery/email/delete">{{ csrf_field() }}<button class="btn ghost small" type="submit">Delete my recovery email</button></form>
+{% else %}
+  <p class="small">Want a backup? We'll email you this recovery link now, and you can ask us to re-send it later. We keep only a one-way fingerprint of your address (we can't read it back or send you anything else), and you can delete it any time.</p>
+  <form method="post" action="/recovery/email" class="stack">
+    {{ csrf_field() }}
+    <label>Email <input type="email" name="email" autocomplete="email" maxlength="254" required></label>
+    <label class="small"><input type="checkbox" name="consent" value="yes" required> Email me my recovery link, and let me request it again later.</label>
+    <button class="btn small" type="submit">Email me my link</button>
+  </form>
+{% endif %}

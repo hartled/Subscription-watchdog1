@@ -1,12 +1,13 @@
 # Render Blueprint — with a PERSISTENT DISK for the SQLite database.
-# WARNING: Render persistent disks are only available on PAID instance types (and are billed per GB).
+# WARNING: Render persistent disks are only available on PAID compute plans and cost $0.25/GB/month.
+# This file = $7/mo web (0.5c-512mb) + 1 GB disk ($0.25/mo) ≈ $7.25/mo + any workspace plan fee. See docs/storage-plan.md.
 # Applying this Blueprint will create a paid service. Do not apply it unless you've chosen to pay.
 # To use it: Render Dashboard → New → Blueprint → set "Blueprint path" to render.disk.yaml.
 services:
   - type: web
     name: subscription-watchdog
     runtime: python
-    plan: 0.5c-512mb   # smallest paid web plan; the free plan cannot attach disks
+    plan: 0.5c-512mb   # 'Starter': 0.5 CPU / 512 MB, $7/mo (verified render.com/pricing 2026-10-26); free can't attach disks
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /healthz
@@ -34,7 +35,26 @@ services:
         sync: false
       - key: UNLOCK_PRICE_CENTS       # display price + inline price; keep in sync with STRIPE_PRICE_ID
         value: 700
-      - key: SUPPORT_EMAIL            # refund requests go here; REQUIRED before live keys are accepted
+      - key: SUPPORT_EMAIL            # refund/support contact shown on pricing, privacy & error pages; REQUIRED before live keys are accepted
+        value: subscriptionwatchdog@mail.grokbot.com
+      # --- Optional email recovery for Unlock holders. OFF unless EMAIL_PROVIDER is set to smtp|resend|postmark. ---
+      - key: EMAIL_PROVIDER           # none (default: email recovery hidden/"not available yet") | smtp | resend | postmark
+        value: none
+      - key: EMAIL_FROM               # e.g. "Subscription Watchdog <recovery@yourdomain.com>" (must be a sender your provider allows)
+        sync: false
+      - key: SMTP_HOST                # smtp only
+        sync: false
+      - key: SMTP_PORT                # smtp only; 587 (starttls) or 465 (ssl)
+        value: 587
+      - key: SMTP_SECURITY            # starttls | ssl | none
+        value: starttls
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD            # secret
+        sync: false
+      - key: RESEND_API_KEY           # resend only (secret)
+        sync: false
+      - key: POSTMARK_TOKEN           # postmark only (secret)
         sync: false
     disk:
       name: watchdog-data

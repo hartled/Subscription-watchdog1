@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Email my recovery link · Subscription Watchdog{% endblock %}
+{% block content %}
+<h1>Email me my recovery link</h1>
+{% if error %}<div class="notice err" role="alert">{{ error }}</div>{% endif %}
+{% if not email_recovery %}
+  <div class="card"><p>Email recovery isn't available yet. Use the recovery link or code you saved after purchase on the <a href="/restore">restore page</a>.
+  {% if support_email %}Lost it? Contact <a href="mailto:{{ support_email }}">{{ support_email }}</a> with the date and amount from your Stripe receipt.{% endif %}</p></div>
+{% elif sent %}
+  <div class="notice ok" role="status">If that address is on file for an unlock, we've sent its recovery link. It can take a few minutes — check your spam folder too.</div>
+  <p><a href="/restore">Have your link? Restore your unlock →</a></p>
+{% else %}
+  <form class="card stack" method="post" action="/recover">
+    {{ csrf_field() }}
+    <p>Only works if you opted in to email recovery after buying the Unlock. We'll send the link to this address if it's on file.</p>
+    <label>Email <input type="email" name="email" autocomplete="email" maxlength="254" required></label>
+    <button class="btn" type="submit">Send my link</button>
+  </form>
+{% endif %}
+{% endblock %}

@@ -7,6 +7,8 @@
 {% if q.get('restored') %}<div class="notice ok">Unlock restored in this browser.</div>{% endif %}
 {% if q.get('saved') %}<div class="notice ok">Saved history is on. Open your recovery link on any device to get back to it.</div>{% endif %}
 {% if q.get('stopped') %}<div class="notice ok">Saved history is off. Your data now auto-deletes after {{ retention_days }} days of inactivity (or delete it now at the bottom of the page).</div>{% endif %}
+{% if q.get('email_saved') %}<div class="notice ok">Recovery email saved — we've sent your link. If it doesn't arrive, check spam.</div>{% endif %}
+{% if q.get('email_deleted') %}<div class="notice ok">Your recovery email has been deleted.</div>{% endif %}
 {% if q.get('forgot') %}<div class="notice ok">This browser no longer holds your unlock. Your code still works anywhere.</div>{% endif %}
 {% if q.get('feature') and not ent %}<div class="notice">{% if q.get('feature') == 'calendar' %}Calendar (.ics) export{% elif q.get('feature') == 'history' %}Saved history{% else %}That feature{% endif %} is part of the one-time Unlock. Everything else stays free.</div>{% endif %}
 {% if error %}<div class="notice err" role="alert">{{ error }}</div>{% endif %}
@@ -38,9 +40,10 @@
     {% if ent %}
       <div class="notice ok"><strong>✓ Unlocked in this browser.</strong>{% if ent.source == 'dev' %} <span class="badge amber">dev simulation — not a real purchase</span>{% endif %}</div>
       <h3>Your recovery link</h3>
-      <p class="small">Keep this somewhere safe (password manager, notes). It's the only way to restore the unlock{% if persistent %} and your saved history{% endif %} on another browser — we don't have your email.</p>
+      <p class="small">Keep this somewhere safe (password manager, notes). It's the only way to restore the unlock{% if persistent %} and your saved history{% endif %} on another browser{% if email_recovery %} (unless you opt in to email recovery below){% endif %}.</p>
       <p><a class="recovery" href="/restore#code={{ token }}">/restore#code={{ token }}</a></p>
       <details><summary class="small">Show code only</summary><code class="recovery">{{ token }}</code></details>
+      {% include "_recovery_email.html" %}
       {% if persistent %}
       <h3>Saved history</h3>
       {% if saved %}
@@ -62,14 +65,14 @@
       <button class="btn big" type="button" disabled>Unlock for {{ price }} — coming soon</button>
       <p class="muted small">Payments aren't switched on yet. Everything in the free plan works fully in the meantime.</p>
     {% endif %}
-    <p class="small"><a href="/restore">Already unlocked on another device? Restore it</a></p>
+    <p class="small"><a href="/restore">Already unlocked on another device? Restore it</a>{% if email_recovery %} · <a href="/recover">Lost your link? Email it to me</a>{% endif %}</p>
   </div>
 </div>
 
 <div class="card prose" id="refunds">
   <h2>Refund policy</h2>
   <p>Not happy? Ask for a full refund within <strong>30 days</strong> of purchase, no questions asked. Email
-  {% if support_email %}<a href="mailto:{{ support_email }}">{{ support_email }}</a>{% else %}<em>[support contact coming soon]</em>{# TODO(D): set SUPPORT_EMAIL before going live #}{% endif %}
+  {% if support_email %}<a href="mailto:{{ support_email }}">{{ support_email }}</a>{% else %}<em>[support contact coming soon]</em>{# set SUPPORT_EMAIL (e.g. subscriptionwatchdog@mail.grokbot.com) #}{% endif %}
   with your recovery code (or the date and amount from your Stripe receipt) so we can find the payment. Refunds go back to the original card through Stripe, usually within 5–10 business days. A refunded unlock stops working.</p>
   <p class="muted small">The Unlock is a one-time digital purchase for this website; there are no recurring charges. Prices in USD; any applicable taxes are shown at checkout.</p>
 </div>

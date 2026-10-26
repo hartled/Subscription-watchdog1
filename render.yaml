@@ -35,5 +35,24 @@ services:
         sync: false
       - key: UNLOCK_PRICE_CENTS       # display price + inline price; keep in sync with STRIPE_PRICE_ID
         value: 700
-      - key: SUPPORT_EMAIL            # refund requests go here; REQUIRED before live keys are accepted
+      - key: SUPPORT_EMAIL            # refund/support contact shown on pricing, privacy & error pages; REQUIRED before live keys are accepted
+        value: subscriptionwatchdog@mail.grokbot.com
+      # --- Optional email recovery for Unlock holders. OFF unless EMAIL_PROVIDER is set to smtp|resend|postmark. ---
+      - key: EMAIL_PROVIDER           # none (default: email recovery hidden/"not available yet") | smtp | resend | postmark
+        value: none
+      - key: EMAIL_FROM               # e.g. "Subscription Watchdog <recovery@yourdomain.com>" (must be a sender your provider allows)
+        sync: false
+      - key: SMTP_HOST                # smtp only
+        sync: false
+      - key: SMTP_PORT                # smtp only; 587 (starttls) or 465 (ssl)
+        value: 587
+      - key: SMTP_SECURITY            # starttls | ssl | none
+        value: starttls
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD            # secret
+        sync: false
+      - key: RESEND_API_KEY           # resend only (secret)
+        sync: false
+      - key: POSTMARK_TOKEN           # postmark only (secret)
         sync: false

@@ -64,6 +64,19 @@ class Entitlement(Base):
     saved_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
+class RecoveryEmail(Base):
+    """OPTIONAL, opt-in recovery email for an unlock. We store only a keyed one-way hash (HMAC-SHA256) of the
+    normalised address — never the address itself. To re-send, the buyer types their email again; we hash it,
+    find the purchase and mail the link to the address they just typed. We therefore can't read, list or
+    market to anyone's email, and a leaked database reveals no addresses."""
+    __tablename__ = "recovery_emails"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    entitlement_id: Mapped[int] = mapped_column(ForeignKey("entitlements.id", ondelete="CASCADE"), unique=True, index=True)
+    email_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class WebhookEvent(Base):
     """Processed Stripe event ids — makes the webhook idempotent (Stripe retries and may deliver twice)."""
     __tablename__ = "webhook_events"
@@ -120,6 +133,12 @@ def purge_expired(db: Session) -> int:
     for sid in ids:
         delete_session_data(db, sid)
     return len(ids)
+
+
+def delete_recovery_email(db: Session, entitlement_id: int) -> int:
+    n = db.execute(delete(RecoveryEmail).where(RecoveryEmail.entitlement_id == entitlement_id)).rowcount
+    db.commit()
+    return n
 
 
 def delete_session_data(db: Session, sid: str):

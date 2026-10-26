@@ -16,9 +16,10 @@
   {% if ent and ent.source == 'dev' %}<div class="notice">DEV_UNLOCK simulation — no payment was made.</div>{% endif %}
   <div class="card">
     <h2>Save your recovery link now</h2>
-    <p>We don't ask for an email, so this link is how you restore the unlock{% if persistent %} and saved history{% endif %} on another browser or device. Bookmark it or keep it in your password manager. Anyone with the link can use your unlock, so keep it private.</p>
+    <p>This link is how you restore the unlock{% if persistent %} and saved history{% endif %} on another browser or device. Bookmark it or keep it in your password manager. Anyone with the link can use your unlock, so keep it private.</p>
     <p><a class="recovery" href="/restore#code={{ token }}">/restore#code={{ token }}</a></p>
     <details><summary class="small">Show code only</summary><code class="recovery">{{ token }}</code></details>
+    {% include "_recovery_email.html" %}
   </div>
   <div class="card">
     <h2>What's next</h2>

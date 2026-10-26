@@ -8,21 +8,23 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 from jinja2 import pass_context
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import httpx
 
 from . import db as dbm
+from . import mailer
 from . import payments as pay
-from .db import Entitlement, Reminder, Transaction, UserSession, WebhookEvent, get_db
+from . import recovery as rec
+from .db import Entitlement, RecoveryEmail, Reminder, Transaction, UserSession, WebhookEvent, get_db
 from .detect import MONTHS_PER, detect_subscriptions, price_changes, totals, upcoming
 from .guides import GENERIC, GUIDES, guide_for
 from .ics import build_ics
@@ -243,6 +245,7 @@ def render(request: Request, name: str, ctx: dict | None = None, status: int = 2
     ctx.setdefault("price", pay.price_display())
     ctx.setdefault("persistent", persistent_storage())
     ctx.setdefault("support_email", pay.env("SUPPORT_EMAIL"))
+    ctx.setdefault("email_recovery", mailer.enabled())
     return templates.TemplateResponse(request, name, ctx, status_code=status)
 
 
@@ -415,6 +418,9 @@ def delete_my_data(request: Request, db: Session = Depends(get_db)):
     sid = current_sid(request, db) or request.cookies.get(COOKIE)
     if sid:
         dbm.delete_session_data(db, sid)  # also unlinks any saved history; the purchase record itself stays
+    ent = current_entitlement(request, db)
+    if ent:
+        dbm.delete_recovery_email(db, ent.id)  # opt-in recovery email (hash) goes too
     resp = RedirectResponse("/?deleted=1", status_code=303)
     resp.delete_cookie(COOKIE)
     return resp
@@ -446,7 +452,9 @@ def _unlock_ctx(request: Request, db: Session) -> dict:
     ent = current_entitlement(request, db)
     token = request.cookies.get(UNLOCK_COOKIE) if ent else None
     saved = ent is not None and ent.saved_session_id is not None and db.get(UserSession, ent.saved_session_id) is not None
-    return {"ent": ent, "token": token, "saved": saved, "missing": pay.missing_config()}
+    email_on_file = ent is not None and db.scalar(
+        select(RecoveryEmail.id).where(RecoveryEmail.entitlement_id == ent.id)) is not None
+    return {"ent": ent, "token": token, "saved": saved, "missing": pay.missing_config(), "email_on_file": email_on_file}
 
 
 @app.get("/pricing", response_class=HTMLResponse)
@@ -514,7 +522,7 @@ def checkout_success(request: Request, session_id: str = "", db: Session = Depen
         return render(request, "success.html", {"problem": "refunded"}, 410)
     token = pay.make_token(session_id)
     request.state.entitlement = ent
-    resp = render(request, "success.html", {"ent": ent, "token": token, "saved": False, "unlocked": True})
+    resp = render(request, "success.html", {**_unlock_ctx(request, db), "token": token, "unlocked": True})
     set_unlock_cookie(resp, token)
     resp.delete_cookie(PENDING_COOKIE)
     return resp
@@ -530,6 +538,7 @@ def _handle_event(db: Session, event: dict):
         if obj.get("refunded") and obj.get("payment_intent"):  # full refund => revoke the unlock
             for ent in db.scalars(select(Entitlement).where(Entitlement.payment_intent == obj["payment_intent"])):
                 ent.status = "refunded"
+                db.execute(delete(RecoveryEmail).where(RecoveryEmail.entitlement_id == ent.id))  # no longer needed
             db.commit()
 
 
@@ -665,3 +674,82 @@ def alerts(request: Request, db: Session = Depends(get_db)):
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
+
+
+# ---------- optional email recovery (Unlock holders only; OFF unless EMAIL_PROVIDER is configured) ----------
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
+
+def _send_links(to: str, tokens: list[str]):
+    """Background task: mail only the recovery link(s). Errors are logged without the address."""
+    subject, body = rec.message([rec.recovery_link(t) for t in tokens])
+    try:
+        mailer.send(to, subject, body)
+    except mailer.MailError as e:
+        log.warning("recovery email failed: %s", e)
+
+
+def _lookup_and_send(email: str, ehash: str):
+    """Background task for 'resend my link': runs after the response, so timing never reveals whether it exists."""
+    with dbm.SessionLocal() as db:
+        rows = db.execute(select(RecoveryEmail, Entitlement).join(Entitlement, RecoveryEmail.entitlement_id == Entitlement.id)
+                          .where(RecoveryEmail.email_hash == ehash, Entitlement.status == "paid")).all()
+        if not rows:
+            return
+        now = datetime.now(timezone.utc)
+        for r, _ in rows:
+            r.last_sent_at = now
+        db.commit()
+        tokens = [pay.make_token(e.stripe_session_id) for _, e in rows]
+    _send_links(email, tokens)
+
+
+@app.post("/recovery/email", dependencies=CSRF)
+def recovery_email_save(request: Request, background: BackgroundTasks, email: str = Form(""), consent: str = Form(""),
+                        db: Session = Depends(get_db)):
+    ent = current_entitlement(request, db)
+    if not ent:
+        return RedirectResponse("/pricing", status_code=303)
+    ctx = _unlock_ctx(request, db)
+    if not mailer.enabled():
+        return render(request, "pricing.html", {**ctx, "error": "Email recovery isn't available yet."}, 503)
+    addr = rec.normalize_email(email)
+    if not addr or consent != "yes":
+        return render(request, "pricing.html", {**ctx, "error": "Enter a valid email address and tick the box to opt in."}, 400)
+    if not rec.limiter.hit(f"setup:{ent.id}", *rec.SETUP_LIMIT):
+        return render(request, "pricing.html", {**ctx, "error": "Too many attempts. Please try again in an hour."}, 429)
+    dbm.delete_recovery_email(db, ent.id)  # one address per unlock; replacing it removes the old hash
+    now = datetime.now(timezone.utc)
+    db.add(RecoveryEmail(entitlement_id=ent.id, email_hash=rec.email_hash(addr), created_at=now, last_sent_at=now))
+    db.commit()
+    background.add_task(_send_links, addr, [pay.make_token(ent.stripe_session_id)])
+    return RedirectResponse("/pricing?email_saved=1", status_code=303)
+
+
+@app.post("/recovery/email/delete", dependencies=CSRF)
+def recovery_email_delete(request: Request, db: Session = Depends(get_db)):
+    ent = current_entitlement(request, db)
+    if ent:
+        dbm.delete_recovery_email(db, ent.id)
+    return RedirectResponse("/pricing?email_deleted=1", status_code=303)
+
+
+@app.get("/recover", response_class=HTMLResponse)
+def recover_page(request: Request):
+    return render(request, "recover.html", {})
+
+
+@app.post("/recover", dependencies=CSRF)
+def recover(request: Request, background: BackgroundTasks, email: str = Form("")):
+    if not mailer.enabled():
+        return render(request, "recover.html", {}, 503)
+    addr = rec.normalize_email(email)
+    if not addr:
+        return render(request, "recover.html", {"error": "Please enter a valid email address."}, 400)
+    ehash = rec.email_hash(addr)
+    # Limits are keyed on the IP and on the address hash whether or not that address exists => no enumeration.
+    if not rec.limiter.hit(f"ip:{_client_ip(request)}", *rec.IP_LIMIT) or not rec.limiter.hit(f"em:{ehash}", *rec.EMAIL_LIMIT):
+        return render(request, "recover.html", {"error": "Too many requests. Please try again in an hour."}, 429)
+    background.add_task(_lookup_and_send, addr, ehash)
+    return render(request, "recover.html", {"sent": True})
