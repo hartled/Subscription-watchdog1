@@ -7,6 +7,8 @@ Everything is configured with env vars and read at call time:
   APP_BASE_URL           https://your-app.onrender.com   (no trailing slash)
   STRIPE_PRICE_ID        optional price_… ; otherwise inline price_data of UNLOCK_PRICE_CENTS
   UNLOCK_PRICE_CENTS     default 700 ($7.00) — also used for display, keep in sync with STRIPE_PRICE_ID
+  STRIPE_TAX_CODE        product tax code for the inline price (default txcd_10103000 = SaaS, personal use);
+                         required when the Stripe account uses Managed Payments / Stripe Tax
   DEV_UNLOCK             "1" = show a "simulate unlock" button (local testing only; refused with live keys)
 
 We never receive or store card details: the buyer types them on Stripe's hosted page.
@@ -35,7 +37,9 @@ class SignatureError(Exception):
 
 
 class StripeError(Exception):
-    pass
+    def __init__(self, message: str, status: int = 0, code: str = ""):
+        super().__init__(message)
+        self.status, self.code = status, code
 
 
 def env(name: str, default: str = "") -> str:
@@ -47,6 +51,13 @@ def price_cents() -> int:
         return int(env("UNLOCK_PRICE_CENTS", "700"))
     except ValueError:
         return 700
+
+
+DEFAULT_TAX_CODE = "txcd_10103000"  # Software as a service (SaaS) - personal use
+
+
+def tax_code() -> str:
+    return env("STRIPE_TAX_CODE", DEFAULT_TAX_CODE) or DEFAULT_TAX_CODE
 
 
 def price_display() -> str:
@@ -187,11 +198,12 @@ def create_checkout_session(nonce_hash: str) -> dict:
             "line_items[0][price_data][product_data][name]": "Subscription Watchdog Unlock",
             "line_items[0][price_data][product_data][description]":
                 "One-time unlock: saved history, price-hike history, calendar (.ics) reminders.",
+            "line_items[0][price_data][product_data][tax_code]": tax_code(),
         })
     with _client() as c:
         r = c.post("/checkout/sessions", data=data, headers={"Idempotency-Key": f"checkout-{nonce_hash}"})
     if r.status_code >= 400:
-        raise StripeError(_err(r))
+        raise _err(r)
     return r.json()
 
 
@@ -199,15 +211,16 @@ def retrieve_session(session_id: str) -> dict:
     with _client() as c:
         r = c.get(f"/checkout/sessions/{session_id}", params={"expand[]": "payment_intent.latest_charge"})
     if r.status_code >= 400:
-        raise StripeError(_err(r))
+        raise _err(r)
     return r.json()
 
 
-def _err(r: httpx.Response) -> str:
+def _err(r: httpx.Response) -> StripeError:
     try:
-        return r.json()["error"].get("message", r.text)[:300]
+        e = r.json()["error"]
+        return StripeError(str(e.get("message", ""))[:300], r.status_code, str(e.get("code") or ""))
     except Exception:
-        return f"HTTP {r.status_code}"
+        return StripeError(f"HTTP {r.status_code}", r.status_code)
 
 
 def session_is_paid_unlock(sess: dict) -> bool:

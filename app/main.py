@@ -508,8 +508,13 @@ def checkout_success(request: Request, session_id: str = "", db: Session = Depen
             return render(request, "success.html", {"problem": "browser"}, 400)
         try:
             sess = pay.retrieve_session(session_id)
-        except (pay.StripeError, httpx.HTTPError) as e:
+        except pay.StripeError as e:
             log.warning("success page could not verify session: %s", e)
+            if e.status == 404:  # unknown/foreign session id: not a temporary problem
+                return render(request, "success.html", {"problem": "browser"}, 400)
+            return render(request, "success.html", {"problem": "pending"}, 502)
+        except httpx.HTTPError as e:
+            log.warning("success page could not reach Stripe: %s", e)
             return render(request, "success.html", {"problem": "pending"}, 502)
         if (sess.get("metadata") or {}).get("nonce_hash") != pay.sha256(nonce):
             return render(request, "success.html", {"problem": "browser"}, 400)

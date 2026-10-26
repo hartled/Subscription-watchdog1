@@ -2,6 +2,7 @@
 import json
 import time
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -272,3 +273,49 @@ def test_csrf_required_on_forms(client):
     assert client.raw_post("/sample", data={"csrf_token": "wrong-token-value-xxxxxxxx"}).status_code == 403
     assert client.post("/sample", follow_redirects=False).status_code == 303
     assert 'name="csrf_token"' in client.get("/").text
+
+
+# ---------- regressions found in the live Stripe test-mode run ----------
+def _capture_post(monkeypatch):
+    sent = {}
+
+    class FakeClient:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def post(self, path, data=None, headers=None):
+            sent.update(path=path, data=data, headers=headers)
+            return httpx.Response(200, json={"id": "cs_test_x", "url": "https://checkout.stripe.com/c/pay/cs_test_x"})
+    monkeypatch.setattr(pay, "_client", lambda: FakeClient())
+    return sent
+
+
+def test_checkout_session_params_include_tax_code(stripe_env, monkeypatch):
+    """Accounts with Managed Payments / Stripe Tax reject inline prices without a product tax code."""
+    sent = _capture_post(monkeypatch)
+    pay.create_checkout_session("h" * 64)
+    d = sent["data"]
+    assert d["mode"] == "payment" and d["line_items[0][price_data][currency]"] == "usd"
+    assert d["line_items[0][price_data][unit_amount]"] == "700"
+    assert d["line_items[0][price_data][product_data][tax_code]"] == "txcd_10103000"
+    monkeypatch.setenv("STRIPE_TAX_CODE", "txcd_10000000")
+    pay.create_checkout_session("i" * 64)
+    assert sent["data"]["line_items[0][price_data][product_data][tax_code]"] == "txcd_10000000"
+
+
+def test_stripe_error_carries_status():
+    e = pay._err(httpx.Response(404, json={"error": {"message": "No such checkout.session", "code": "resource_missing"}}))
+    assert isinstance(e, pay.StripeError) and e.status == 404 and e.code == "resource_missing"
+    assert pay._err(httpx.Response(500, text="oops")).status == 500
+
+
+def test_success_unknown_session_is_400_not_pending(client, stripe_env, monkeypatch):
+    def missing(sid):
+        raise pay.StripeError("No such checkout.session", 404, "resource_missing")
+    monkeypatch.setattr(pay, "retrieve_session", missing)
+    client.cookies.set("sw_checkout", "some-nonce")
+    assert client.get("/checkout/success?session_id=cs_test_nope").status_code == 400
+
+    def down(sid):
+        raise pay.StripeError("server error", 500)
+    monkeypatch.setattr(pay, "retrieve_session", down)
+    assert client.get("/checkout/success?session_id=cs_test_nope").status_code == 502

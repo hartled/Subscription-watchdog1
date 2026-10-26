@@ -57,6 +57,13 @@ docker build -t subscription-watchdog .
 docker run -p 8000:8000 -v "$PWD/data:/data" subscription-watchdog
 ```
 
+### Going live (Stripe)
+1. Deploy, then Stripe Dashboard → Developers → Webhooks → **Add endpoint**: `https://<your-app>.onrender.com/stripe/webhook`,
+   events `checkout.session.completed`, `checkout.session.async_payment_succeeded`, `charge.refunded`. Copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
+2. Set `STRIPE_SECRET_KEY` (secret key, or a restricted key with **write** on Checkout Sessions and **read** on Checkout Sessions/Charges/PaymentIntents), `UNLOCK_SECRET`, `APP_BASE_URL`, `SUPPORT_EMAIL` in Render.
+3. Managed Payments: if it's on, Stripe is merchant of record, may add sales tax/VAT at checkout and may refund buyers itself (refunds still revoke the unlock via `charge.refunded`).
+4. Do one real test purchase in test mode in a browser (card 4242 4242 4242 4242), then refund it from the Dashboard and confirm the unlock disappears.
+
 ### Configuration (env vars)
 | Var | Default | Meaning |
 |---|---|---|
@@ -72,6 +79,7 @@ docker run -p 8000:8000 -v "$PWD/data:/data" subscription-watchdog
 | `APP_BASE_URL` | — | Public URL, no trailing slash (used for Stripe success/cancel URLs) |
 | `STRIPE_PRICE_ID` | — | Optional `price_…`; otherwise inline price of `UNLOCK_PRICE_CENTS` |
 | `UNLOCK_PRICE_CENTS` | `700` | Display price (and inline price) |
+| `STRIPE_TAX_CODE` | `txcd_10103000` | Product tax code for the inline price (SaaS, personal use). **Required** when the Stripe account has Managed Payments (on by default for new accounts) or Stripe Tax; Stripe rejects the checkout without it |
 | `SUPPORT_EMAIL` | — | Support/refund contact shown on pricing, privacy and help pages; required before live keys are accepted. Set it to **`subscriptionwatchdog@mail.grokbot.com`** (pre-filled in the Render Blueprints; never hardcoded in code) |
 | `EMAIL_PROVIDER` | `none` | `none` \| `smtp` \| `resend` \| `postmark` \| `console` (local only) — optional email recovery |
 | `EMAIL_FROM` | — | Sender, e.g. `Subscription Watchdog <recovery@yourdomain.com>` (must be allowed by your provider) |
@@ -87,7 +95,8 @@ Payments are enabled only when `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `UN
 ## Testing the Unlock with Stripe **test** keys (no real money)
 1. Stripe Dashboard → toggle **Test mode** → Developers → API keys → copy the `sk_test_…` secret key.
 2. Install the [Stripe CLI](https://docs.stripe.com/stripe-cli) and run `stripe login`, then
-   `stripe listen --forward-to localhost:8000/stripe/webhook` — it prints a `whsec_…` secret.
+   `stripe listen --events checkout.session.completed,checkout.session.async_payment_succeeded,charge.refunded --forward-to localhost:8000/stripe/webhook`
+   — it prints a `whsec_…` secret (CLI ≥ 1.5x requires `--events`; `--print-secret` prints only the secret).
 3. Run the app:
    ```bash
    export STRIPE_SECRET_KEY=sk_test_… STRIPE_WEBHOOK_SECRET=whsec_… \
